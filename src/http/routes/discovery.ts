@@ -51,7 +51,10 @@ const serverCard = {
   ],
 };
 
-const SKILL = readFileSync(new URL("../../../skills/callsign/SKILL.md", import.meta.url), "utf8");
+// The skill file is written for callsign.im; a self-hosted instance must send agents to itself.
+const SKILL = readFileSync(new URL("../../../skills/callsign/SKILL.md", import.meta.url), "utf8")
+  .replaceAll("https://api.callsign.im/", api("/"))
+  .replaceAll("https://callsign.im/", site("/"));
 
 const SECURITY_TXT = [
   "Contact: mailto:security@callsign.im",

@@ -45,6 +45,14 @@ describe("discovery", () => {
     expect(await response.text()).toMatch(/^---\nname: callsign\n/);
   });
 
+  it("points the agent skill at this instance, not callsign.im", async () => {
+    const skill = await (await app.request("/skill.md")).text();
+    expect(skill).toContain("callsign http://localhost:8080/mcp`");
+    expect(skill).toContain("POST http://localhost:8080/v1/register");
+    expect(skill).toContain("http://localhost:3000/llms.txt");
+    expect(skill).not.toContain("callsign.im");
+  });
+
   it("serves security.txt", async () => {
     const response = await app.request("/.well-known/security.txt");
     expect(await response.text()).toContain("Contact: mailto:security@callsign.im");
