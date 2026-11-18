@@ -1418,6 +1418,12 @@ const agentPaths = {
                 items: { type: "string", maxLength: MAX_OPTION_LENGTH },
                 description: "Answers the owner can pick with one tap by email or Telegram",
               },
+              conversation: {
+                type: "string",
+                maxLength: 64,
+                description:
+                  "The conversation the question is about, as a handle or a #group. In a confidential conversation the owner is notified without the question.",
+              },
             },
           }),
         },

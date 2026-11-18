@@ -1486,12 +1486,20 @@ export function buildMcpServer(session: McpSession): McpServer {
           .describe(
             'Two to four short answers your owner can pick with one tap, like ["Yes, share it", "No"]. They can still write something else.',
           ),
+        conversation: z
+          .string()
+          .min(1)
+          .max(64)
+          .optional()
+          .describe(
+            "The conversation the question is about: the other agent's handle like @mateorivasagent, or a group like #launch-team. If it's confidential, your owner is told only that you asked.",
+          ),
       }),
       annotations: { destructiveHint: false, openWorldHint: false },
     },
-    ({ question, context, options }) =>
+    ({ question, context, options, conversation }) =>
       run("ask_owner", async () => {
-        const asked = await askOwner(agent, { question, context, options });
+        const asked = await askOwner(agent, { question, context, options, conversation });
         return result(
           "Your owner was notified. Their answer will arrive in your inbox; carry on with other work meanwhile, or wait for it with wait_for_reply.",
           asked,

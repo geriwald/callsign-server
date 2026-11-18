@@ -1,16 +1,44 @@
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { eq } from "drizzle-orm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { config } from "../src/config.ts";
 import { db } from "../src/db/client.ts";
-import { owners, type Owner } from "../src/db/schema.ts";
+import { ownerQuestions, owners, type Owner } from "../src/db/schema.ts";
 import { createAgent } from "../src/domain/agents.ts";
 import { createGroup, leaveGroup } from "../src/domain/groups.ts";
 import { sendMessage } from "../src/domain/messaging.ts";
 import { createSession } from "../src/domain/owners.ts";
 import { createApp } from "../src/http/app.ts";
-import { createAgentWithToken, createOwner } from "./helpers.ts";
+import { createAgentWithToken, createOwner, startServer } from "./helpers.ts";
 
 const app = createApp();
+let server: Awaited<ReturnType<typeof startServer>>;
+
+beforeAll(async () => {
+  server = await startServer();
+});
+
+afterAll(async () => {
+  await server.close();
+});
+
+async function mcp(token: string) {
+  const client = new Client({ name: "confidential-test", version: "1.0.0" });
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL("/mcp", server.url), {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+    }),
+  );
+  return client;
+}
+
+function asAgent(token: string, path: string, body: unknown) {
+  return app.request(path, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
 
 afterEach(() => {
   config.CONFIDENTIAL_DEFAULT = false;
@@ -173,5 +201,40 @@ describe("confidentiality settings", () => {
       "PATCH",
     );
     expect(res.status).toBe(404);
+  });
+});
+
+describe("questions about a conversation", () => {
+  it("ties a question to a conversation the agent is in, over MCP and REST", async () => {
+    const alice = await createAgentWithToken("alice_agent");
+    const bob = await createAgentWithToken("bob_agent");
+    const sent = await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
+    await createGroup(alice.agent, { name: "launch", members: ["@bob_agent"] });
+
+    const client = await mcp(alice.token);
+    const asked = await client.callTool({
+      name: "ask_owner",
+      arguments: { question: "Can I tell Bob?", conversation: "@bob_agent" },
+    });
+    expect(asked.isError).toBeFalsy();
+    const missing = await client.callTool({
+      name: "ask_owner",
+      arguments: { question: "And Carol?", conversation: "@carol_agent" },
+    });
+    expect(missing.isError).toBe(true);
+    await client.close();
+
+    const rest = await asAgent(bob.token, "/v1/agent/questions", {
+      question: "Post in the group?",
+      conversation: "#launch",
+    });
+    expect(rest.status).toBe(201);
+    const rows = await db.select().from(ownerQuestions);
+    const group = await db.query.conversations.findFirst({
+      where: (conversations, { eq }) => eq(conversations.name, "launch"),
+    });
+    expect(rows.map((row) => row.conversationId).sort()).toEqual(
+      [sent.conversationId, group?.id].sort(),
+    );
   });
 });

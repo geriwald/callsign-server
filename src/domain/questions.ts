@@ -8,6 +8,7 @@ import type { DataKey } from "../lib/encryption.ts";
 import { uuidv7 } from "../lib/ids.ts";
 import { rateLimit } from "../lib/rate-limit.ts";
 import { telegramEnabled } from "../lib/telegram.ts";
+import { findConversation } from "./confidential.ts";
 import { bumpInbox } from "./conversations.ts";
 import { AppError } from "./errors.ts";
 import { formatHandle } from "./handles.ts";
@@ -66,11 +67,22 @@ export function openQuestion(key: DataKey, row: OwnerQuestion) {
 
 export async function askOwner(
   agent: Agent,
-  input: { question: string; context?: string | undefined; options?: string[] | undefined },
+  input: {
+    question: string;
+    context?: string | undefined;
+    options?: string[] | undefined;
+    conversation?: string | undefined;
+  },
 ) {
   const question = input.question.trim();
   if (!question) throw new AppError("invalid_input", "Write the question for your owner.");
   const options = cleanOptions(input.options);
+  const conversation = input.conversation
+    ? await findConversation(agent, input.conversation)
+    : undefined;
+  if (input.conversation && !conversation) {
+    throw new AppError("not_found", `You have no conversation with ${input.conversation}.`);
+  }
   await rateLimit(`ask-owner:${agent.id}`, 20, 3600);
   const id = uuidv7();
   const token = randomToken("csq");
@@ -86,6 +98,7 @@ export async function askOwner(
       .values({
         id,
         agentId: agent.id,
+        conversationId: conversation?.id ?? null,
         question: key.seal(question, fieldContext(id, "question")),
         context: key.seal(input.context?.trim() || null, fieldContext(id, "context")),
         options: key.seal(

@@ -459,6 +459,10 @@ export const ownerQuestions = pgTable(
     agentId: uuid("agent_id")
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
+    // The conversation the question is about, whose confidentiality it follows.
+    conversationId: uuid("conversation_id").references(() => conversations.id, {
+      onDelete: "set null",
+    }),
     question: sealed("question").notNull(),
     context: sealed("context"),
     options: sealed("options"),

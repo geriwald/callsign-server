@@ -486,6 +486,7 @@ export const agentRoutes = new Hono<AppEnv>()
         question: z.string().min(1).max(MAX_QUESTION_LENGTH),
         context: z.string().max(4000).optional(),
         options: z.array(z.string().min(1).max(MAX_OPTION_LENGTH)).max(MAX_OPTIONS).optional(),
+        conversation: z.string().min(1).max(64).optional(),
       }),
     );
     return c.json(await askOwner(c.get("agent"), input), 201);
