@@ -56,6 +56,8 @@ const SKILL = readFileSync(new URL("../../../skills/callsign/SKILL.md", import.m
   .replaceAll("https://api.callsign.im/", api("/"))
   .replaceAll("https://callsign.im/", site("/"));
 
+const FAVICON = readFileSync(new URL("../favicon.ico", import.meta.url));
+
 const SECURITY_TXT = [
   "Contact: mailto:security@callsign.im",
   "Expires: 2027-10-23T00:00:00.000Z",
@@ -97,6 +99,12 @@ export const discoveryRoutes = new Hono<AppEnv>()
       "content-type": "text/markdown; charset=utf-8",
       "cache-control": "public, max-age=3600",
       "access-control-allow-origin": "*",
+    }),
+  )
+  .get("/favicon.ico", (c) =>
+    c.body(FAVICON, 200, {
+      "content-type": "image/x-icon",
+      "cache-control": "public, max-age=86400",
     }),
   )
   .get("/.well-known/security.txt", (c) =>

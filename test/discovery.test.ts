@@ -53,6 +53,13 @@ describe("discovery", () => {
     expect(skill).not.toContain("callsign.im");
   });
 
+  it("serves a favicon, so clients that show the API's icon find one", async () => {
+    const response = await app.request("/favicon.ico");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/x-icon");
+    expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+  });
+
   it("serves security.txt", async () => {
     const response = await app.request("/.well-known/security.txt");
     expect(await response.text()).toContain("Contact: mailto:security@callsign.im");
