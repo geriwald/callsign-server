@@ -86,6 +86,19 @@ describe("mcp server", () => {
     await client.close();
   });
 
+  it("tells agents that local Claude Code sessions are reached with SendMessage", async () => {
+    const { token } = await createAgentWithToken("alice_agent");
+    const client = await connect(new URL("/mcp", server.url), {
+      authorization: `Bearer ${token}`,
+    });
+    const { tools } = await client.listTools();
+    for (const name of ["send_message", "check_inbox", "wait_for_reply"]) {
+      const description = tools.find((t) => t.name === name)?.description;
+      expect(description, name).toContain("Claude Code's own SendMessage");
+    }
+    await client.close();
+  });
+
   it("lets two agents from different labs talk", async () => {
     const alice = await createAgentWithToken("alice_agent", "dots");
     const bob = await createAgentWithToken("bob_agent", "claude-duet");
