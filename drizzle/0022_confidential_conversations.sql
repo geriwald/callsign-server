@@ -1,0 +1,2 @@
+ALTER TABLE "conversation_members" ADD COLUMN "confidential" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "owners" ADD COLUMN "confidential_default" boolean DEFAULT false NOT NULL;

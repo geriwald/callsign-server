@@ -60,6 +60,9 @@ const schema = z.object({
   RESEND_API_URL: z.url().default("https://api.resend.com"),
   // "invite" lets only ADMIN_EMAILS and people with an approved invitation create an account.
   SIGNUP_MODE: z.enum(["open", "invite"]).default("open"),
+  // The confidentiality default of new owners: notifications about confidential conversations
+  // carry no content.
+  CONFIDENTIAL_DEFAULT: z.stringbool().default(false),
   ADMIN_EMAILS: z
     .string()
     .default("")

@@ -26,6 +26,7 @@ import {
   verifyLedger,
 } from "../../domain/ledger.ts";
 import { deleteContact, listContacts, saveContact, updateContact } from "../../domain/contacts.ts";
+import { confidentialityFor, setConfidential } from "../../domain/confidential.ts";
 import { readFile } from "../../domain/files.ts";
 import { listFollowUps } from "../../domain/follow-ups.ts";
 import { bridgeAddress } from "../../domain/email-bridge.ts";
@@ -214,7 +215,10 @@ export const ownerRoutes = new Hono<AppEnv>()
     });
   })
   .patch("/v1/me", async (c) => {
-    const fields = await parseBody(c, z.object({ showDomain: z.boolean().optional() }));
+    const fields = await parseBody(
+      c,
+      z.object({ showDomain: z.boolean().optional(), confidentialDefault: z.boolean().optional() }),
+    );
     const owner = await updateOwner(c.get("owner"), fields);
     return c.json({
       owner: { ...ownerAccountView(owner), organizationDomain: organizationDomain(owner.email) },
@@ -359,7 +363,17 @@ export const ownerRoutes = new Hono<AppEnv>()
   })
   .get("/v1/agents/:handle/conversations", async (c) => {
     const agent = await getOwnedAgent(c.get("owner").id, c.req.param("handle"));
-    return c.json({ conversations: await listConversations(agent) });
+    const conversations = await listConversations(agent);
+    const flags = await confidentialityFor(
+      agent.ownerId,
+      conversations.map((conversation) => conversation.conversationId),
+    );
+    return c.json({
+      conversations: conversations.map((conversation) => ({
+        ...conversation,
+        ...flags.get(conversation.conversationId),
+      })),
+    });
   })
   .get("/v1/agents/:handle/conversations/:peer", async (c) => {
     const agent = await getOwnedAgent(c.get("owner").id, c.req.param("handle"));
@@ -369,7 +383,17 @@ export const ownerRoutes = new Hono<AppEnv>()
       before: query.before,
       markRead: false,
     });
-    return c.json(conversation);
+    const id = conversation.conversationId;
+    const flags = id ? (await confidentialityFor(agent.ownerId, [id])).get(id) : undefined;
+    return c.json({
+      ...conversation,
+      ...(flags ?? { confidential: false, myConfidential: false }),
+    });
+  })
+  .patch("/v1/agents/:handle/conversations/:peer", async (c) => {
+    const agent = await getOwnedAgent(c.get("owner").id, c.req.param("handle"));
+    const { confidential } = await parseBody(c, z.object({ confidential: z.boolean() }));
+    return c.json(await setConfidential(agent, c.req.param("peer"), confidential));
   })
   .post("/v1/agents/:handle/contacts/:peer", async (c) => {
     const agent = await getOwnedAgent(c.get("owner").id, c.req.param("handle"));

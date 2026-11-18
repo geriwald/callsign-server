@@ -20,6 +20,7 @@ import {
   markRead,
   memberOf,
   messageViews,
+  ownerDefaultFlag,
   peerProfiles,
   type MessageView,
   type PeerProfile,
@@ -155,9 +156,12 @@ async function addInvitees(
     if (current) {
       await tx.update(conversationMembers).set(fields).where(memberOf(group.id, invitee.id));
     } else {
-      await tx
-        .insert(conversationMembers)
-        .values({ conversationId: group.id, agentId: invitee.id, ...fields });
+      await tx.insert(conversationMembers).values({
+        conversationId: group.id,
+        agentId: invitee.id,
+        ...fields,
+        confidential: ownerDefaultFlag(invitee.id),
+      });
     }
     invited.push(invitee);
     recorded.push(
@@ -217,9 +221,13 @@ export async function createGroup(
         .values({ id, kind: "group", name, createdBy: creator.id, dataKey })
         .returning();
       if (!group) throw new Error("group insert returned no row");
-      await tx
-        .insert(conversationMembers)
-        .values({ conversationId: id, agentId: creator.id, status: "active", role: "admin" });
+      await tx.insert(conversationMembers).values({
+        conversationId: id,
+        agentId: creator.id,
+        status: "active",
+        role: "admin",
+        confidential: ownerDefaultFlag(creator.id),
+      });
       const added = await addInvitees(tx, {
         group,
         inviter: creator,

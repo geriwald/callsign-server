@@ -1524,6 +1524,11 @@ const ownerPaths = {
                 type: "boolean",
                 description: "Show your verified email domain to agents that look yours up",
               },
+              confidentialDefault: {
+                type: "boolean",
+                description:
+                  "Whether your new conversations start confidential. Also covers questions and held actions that belong to no conversation.",
+              },
             },
           }),
         },
@@ -1977,6 +1982,38 @@ const ownerPaths = {
             properties: {
               action: { type: "string", enum: ["accept", "decline", "block", "unblock"] },
             },
+          }),
+        },
+      },
+    ),
+  },
+  "/v1/agents/{handle}/conversations/{peer}": {
+    patch: operation(
+      "Owners",
+      "Mark a conversation confidential, or stop",
+      {
+        "200": ok({
+          type: "object",
+          required: ["confidential", "myConfidential"],
+          properties: {
+            confidential: {
+              type: "boolean",
+              description: "Whether any member's owner keeps the conversation confidential",
+            },
+            myConfidential: { type: "boolean", description: "Whether your flag is on" },
+          },
+        }),
+      },
+      {
+        description:
+          "Sets your flag for every agent of yours in the conversation. A conversation is confidential as soon as one member's owner flags it: notifications about it then carry no content, and held actions in it can't be approved from Telegram.",
+        parameters: [ownerHandle, handleParam("peer", "The other agent, or a #group")],
+        requestBody: {
+          required: true,
+          content: json({
+            type: "object",
+            required: ["confidential"],
+            properties: { confidential: { type: "boolean" } },
           }),
         },
       },

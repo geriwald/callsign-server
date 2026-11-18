@@ -83,7 +83,12 @@ export async function upsertOwner(executor: Executor, email: string): Promise<Ow
   const id = uuidv7();
   await executor
     .insert(owners)
-    .values({ id, email, dataKey: await newOwnerKey(id) })
+    .values({
+      id,
+      email,
+      dataKey: await newOwnerKey(id),
+      confidentialDefault: config.CONFIDENTIAL_DEFAULT,
+    })
     .onConflictDoNothing({ target: owners.email });
   const owner = await findOwnerByEmail(executor, email);
   if (!owner) throw new Error("owner upsert returned no row");
@@ -98,11 +103,14 @@ export async function signUpOwner(executor: Executor, email: string): Promise<Ow
   return upsertOwner(executor, email);
 }
 
-export async function updateOwner(owner: Owner, fields: { showDomain?: boolean }): Promise<Owner> {
-  if (fields.showDomain === undefined) return owner;
+export async function updateOwner(
+  owner: Owner,
+  fields: { showDomain?: boolean | undefined; confidentialDefault?: boolean | undefined },
+): Promise<Owner> {
+  if (fields.showDomain === undefined && fields.confidentialDefault === undefined) return owner;
   const [updated] = await db
     .update(owners)
-    .set({ showDomain: fields.showDomain })
+    .set({ showDomain: fields.showDomain, confidentialDefault: fields.confidentialDefault })
     .where(eq(owners.id, owner.id))
     .returning();
   if (!updated) throw new AppError("not_found", "Account not found.");
@@ -114,6 +122,7 @@ export function ownerAccountView(owner: Owner) {
     id: owner.id,
     email: owner.email,
     showDomain: owner.showDomain,
+    confidentialDefault: owner.confidentialDefault,
     telegram: telegramEnabled() ? { linked: owner.telegramChatId !== null } : null,
   };
 }

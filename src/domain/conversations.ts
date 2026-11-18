@@ -1,6 +1,6 @@
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, lt, sql, type SQL } from "drizzle-orm";
 import { db, type Executor } from "../db/client.ts";
-import { conversationMembers, type Agent, type Message } from "../db/schema.ts";
+import { agents, conversationMembers, owners, type Agent, type Message } from "../db/schema.ts";
 import type { DataKey } from "../lib/encryption.ts";
 import { bestEffort, redis } from "../lib/redis.ts";
 import { publicProfile } from "./agents.ts";
@@ -49,6 +49,11 @@ export function memberOf(conversationId: string, agentId: string) {
     eq(conversationMembers.conversationId, conversationId),
     eq(conversationMembers.agentId, agentId),
   );
+}
+
+/** A new member's confidentiality flag: its owner's default. */
+export function ownerDefaultFlag(agentId: string): SQL<boolean> {
+  return sql<boolean>`(select ${owners.confidentialDefault} from ${owners} join ${agents} on ${agents.ownerId} = ${owners.id} where ${agents.id} = ${agentId})`;
 }
 
 export function mentions(body: string, handle: string): boolean {

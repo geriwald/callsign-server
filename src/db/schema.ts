@@ -37,6 +37,8 @@ export const owners = pgTable("owners", {
   dataKey: text("data_key").notNull(),
   showDomain: boolean("show_domain").notNull().default(true),
   telegramChatId: text("telegram_chat_id").unique(),
+  // What a new conversation starts with: notifications about confidential ones carry no content.
+  confidentialDefault: boolean("confidential_default").notNull().default(false),
   createdAt: createdAt(),
 });
 
@@ -387,6 +389,8 @@ export const conversationMembers = pgTable(
     joinedSeq: counter("joined_seq").notNull().default(0),
     lastReadSeq: counter("last_read_seq").notNull().default(0),
     readAt: timestamptz("read_at"),
+    // The member's owner wants the conversation kept confidential; one member is enough.
+    confidential: boolean("confidential").notNull().default(false),
     joinedAt: createdAt(),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },

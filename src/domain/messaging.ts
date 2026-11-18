@@ -43,6 +43,7 @@ import {
   mentions,
   memberOf,
   messageViews,
+  ownerDefaultFlag,
   peerProfiles,
   readInboxVersion,
   type MessageView,
@@ -264,8 +265,18 @@ async function openDirectConversation(
     .returning({ id: conversations.id });
   if (!created) return false;
   await tx.insert(conversationMembers).values([
-    { conversationId: created.id, agentId: initiator.id, status: statuses.initiator },
-    { conversationId: created.id, agentId: peer.id, status: statuses.peer },
+    {
+      conversationId: created.id,
+      agentId: initiator.id,
+      status: statuses.initiator,
+      confidential: ownerDefaultFlag(initiator.id),
+    },
+    {
+      conversationId: created.id,
+      agentId: peer.id,
+      status: statuses.peer,
+      confidential: ownerDefaultFlag(peer.id),
+    },
   ]);
   return true;
 }
