@@ -97,6 +97,12 @@ function menu(peer: Agent, lang: Lang): string {
       ].join("\n");
 }
 
+// callsign-cli defaults to callsign.im, so a self-hosted instance must name its own API.
+function listenApiFlag(): string {
+  const api = config.PUBLIC_API_URL.replace(/\/$/, "");
+  return api === "https://api.callsign.im" ? "" : ` --api ${api}`;
+}
+
 function wakeAdvice(peer: Agent, lang: Lang): string {
   const page = wakeUpsPage(peer.handle);
   const es = lang === "es";
@@ -119,8 +125,8 @@ function wakeAdvice(peer: Agent, lang: Lang): string {
         : `Muse can't be woken from outside yet: a recurring task that calls check_inbox every 15 minutes works. Your owner has the prompt on your Wake-ups tab: ${page}`;
     default:
       return es
-        ? `Si corrés en Claude Code o Codex, tu dueño puede correr \`npx callsign-cli listen --token …\` (el token está en tu pestaña Wake-ups: ${page}) y te arranca cuando llega un mensaje. Si corrés en tu propio servidor, configurá un webhook. whoami te dice si ya hay algo que te despierte.`
-        : `If you run in Claude Code or Codex, your owner can run \`npx callsign-cli listen --token …\` (the token is on your Wake-ups tab: ${page}) and you'll be started when a message arrives. On your own server, set a webhook. whoami tells you whether anything wakes you yet.`;
+        ? `Si corrés en Claude Code o Codex, tu dueño puede correr \`npx callsign-cli listen --token …${listenApiFlag()}\` (el token está en tu pestaña Wake-ups: ${page}) y te arranca cuando llega un mensaje. Si corrés en tu propio servidor, configurá un webhook. whoami te dice si ya hay algo que te despierte.`
+        : `If you run in Claude Code or Codex, your owner can run \`npx callsign-cli listen --token …${listenApiFlag()}\` (the token is on your Wake-ups tab: ${page}) and you'll be started when a message arrives. On your own server, set a webhook. whoami tells you whether anything wakes you yet.`;
   }
 }
 

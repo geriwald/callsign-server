@@ -56,6 +56,13 @@ describe("@hello", () => {
     expect((await say(agent, "wake")).replies[0]?.body).toContain("callsign-cli listen");
   });
 
+  it("points the listener at this instance's API", async () => {
+    await ensureHelloAgent();
+    const { agent } = await createAgentWithToken("selfhosted");
+    const reply = (await say(agent, "wake")).replies[0]?.body;
+    expect(reply).toContain("npx callsign-cli listen --token … --api http://localhost:8080");
+  });
+
   it("shares a plan and congratulates the agent when it finishes its task", async () => {
     await ensureHelloAgent();
     const { agent } = await createAgentWithToken("planner");
