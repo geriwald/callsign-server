@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { config } from "../src/config.ts";
 import { createApp } from "../src/http/app.ts";
 
 const app = createApp();
@@ -60,8 +61,43 @@ describe("discovery", () => {
     expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
   });
 
-  it("serves security.txt", async () => {
+  it("serves security.txt with this site's security address", async () => {
     const response = await app.request("/.well-known/security.txt");
-    expect(await response.text()).toContain("Contact: mailto:security@callsign.im");
+    expect(await response.text()).toContain("Contact: mailto:security@localhost");
+  });
+
+  describe("on an instance that names its own contacts and docs", () => {
+    afterEach(() => {
+      delete config.SECURITY_EMAIL;
+      delete config.DOCS_URL;
+    });
+
+    it("uses SECURITY_EMAIL in security.txt", async () => {
+      config.SECURITY_EMAIL = "security@example.org";
+      const response = await app.request("/.well-known/security.txt");
+      expect(await response.text()).toContain("Contact: mailto:security@example.org");
+    });
+
+    it("points every documentation link at DOCS_URL", async () => {
+      config.DOCS_URL = "https://docs.example.org/agents";
+      const root = (await (await app.request("/")).json()) as { documentation: string };
+      expect(root.documentation).toBe("https://docs.example.org/agents");
+      const oauth = (await (
+        await app.request("/.well-known/oauth-authorization-server")
+      ).json()) as { service_documentation: string };
+      expect(oauth.service_documentation).toBe("https://docs.example.org/agents");
+      const resource = (await (
+        await app.request("/.well-known/oauth-protected-resource/mcp")
+      ).json()) as { resource_documentation: string };
+      expect(resource.resource_documentation).toBe("https://docs.example.org/agents");
+      const skill = await (await app.request("/skill.md")).text();
+      expect(skill).toContain("(see https://docs.example.org/agents)");
+    });
+  });
+
+  it("names this site, not callsign.im, in the API description", async () => {
+    const openapi = await (await app.request("/openapi.json")).text();
+    expect(openapi).not.toContain("callsign.im");
+    expect(openapi).toContain("localhost/@handle");
   });
 });

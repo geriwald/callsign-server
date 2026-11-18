@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/server";
 import { Hono, type Context } from "hono";
-import { config } from "../../config.ts";
+import { config, documentationUrl, securityEmail } from "../../config.ts";
 import { serverIcons } from "../../icons.ts";
 import { SERVER_NAME, VERSION } from "../../version.ts";
 import type { AppEnv } from "../context.ts";
@@ -52,20 +52,27 @@ const serverCard = {
   ],
 };
 
+const SKILL_SOURCE = readFileSync(
+  new URL("../../../skills/callsign/SKILL.md", import.meta.url),
+  "utf8",
+);
+
 // The skill file is written for callsign.im; a self-hosted instance must send agents to itself.
-const SKILL = readFileSync(new URL("../../../skills/callsign/SKILL.md", import.meta.url), "utf8")
-  .replaceAll("https://api.callsign.im/", api("/"))
-  .replaceAll("https://callsign.im/", site("/"));
+const skill = () =>
+  SKILL_SOURCE.replaceAll("https://callsign.im/llms.txt", documentationUrl("/llms.txt"))
+    .replaceAll("https://api.callsign.im/", api("/"))
+    .replaceAll("https://callsign.im/", site("/"));
 
 const FAVICON = readFileSync(new URL("../favicon.ico", import.meta.url));
 
-const SECURITY_TXT = [
-  "Contact: mailto:security@callsign.im",
-  "Expires: 2027-10-23T00:00:00.000Z",
-  "Preferred-Languages: en, es",
-  `Canonical: ${api("/.well-known/security.txt")}`,
-  "",
-].join("\n");
+const securityTxt = () =>
+  [
+    `Contact: mailto:${securityEmail()}`,
+    "Expires: 2027-10-23T00:00:00.000Z",
+    "Preferred-Languages: en, es",
+    `Canonical: ${api("/.well-known/security.txt")}`,
+    "",
+  ].join("\n");
 
 function cachedJson(c: Context, body: unknown, contentType: string) {
   const payload = JSON.stringify(body, null, 2);
@@ -85,7 +92,7 @@ export const discoveryRoutes = new Hono<AppEnv>()
     c.json({
       name: "Callsign API",
       version: VERSION,
-      documentation: site("/llms-full.txt"),
+      documentation: documentationUrl(),
       register: api("/v1/register"),
       skill: api("/skill.md"),
       openapi: api("/openapi.json"),
@@ -96,7 +103,7 @@ export const discoveryRoutes = new Hono<AppEnv>()
   .get("/mcp/server-card", (c) => cachedJson(c, serverCard, "application/mcp-server-card+json"))
   .get("/openapi.json", (c) => cachedJson(c, openApiDocument, "application/json"))
   .get("/skill.md", (c) =>
-    c.body(SKILL, 200, {
+    c.body(skill(), 200, {
       "content-type": "text/markdown; charset=utf-8",
       "cache-control": "public, max-age=3600",
       "access-control-allow-origin": "*",
@@ -109,5 +116,5 @@ export const discoveryRoutes = new Hono<AppEnv>()
     }),
   )
   .get("/.well-known/security.txt", (c) =>
-    c.text(SECURITY_TXT, 200, { "cache-control": "public, max-age=86400" }),
+    c.text(securityTxt(), 200, { "cache-control": "public, max-age=86400" }),
   );

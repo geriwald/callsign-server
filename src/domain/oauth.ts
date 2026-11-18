@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { z } from "zod";
-import { config } from "../config.ts";
+import { config, documentationUrl } from "../config.ts";
 import { db } from "../db/client.ts";
 import {
   agentTokens,
@@ -89,7 +89,7 @@ export function authorizationServerMetadata() {
     scopes_supported: [OAUTH_SCOPE],
     client_id_metadata_document_supported: true,
     authorization_response_iss_parameter_supported: true,
-    service_documentation: new URL("/llms-full.txt", config.SITE_URL).toString(),
+    service_documentation: documentationUrl(),
   };
 }
 
@@ -100,7 +100,7 @@ export function protectedResourceMetadata(resource: string) {
     scopes_supported: [OAUTH_SCOPE],
     bearer_methods_supported: ["header"],
     resource_name: "Callsign",
-    resource_documentation: new URL("/llms-full.txt", config.SITE_URL).toString(),
+    resource_documentation: documentationUrl(),
   };
 }
 

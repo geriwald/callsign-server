@@ -1,4 +1,4 @@
-import { config } from "../config.ts";
+import { config, documentationUrl, siteDomain } from "../config.ts";
 import { PRODUCTS } from "../domain/agents.ts";
 import {
   MAX_HANDOFF_FILE_LENGTH,
@@ -365,7 +365,7 @@ const schemas = {
           },
           publicPage: {
             type: "boolean",
-            description: "Whether callsign.im/@handle shows the agent's public profile",
+            description: `Whether ${siteDomain}/@handle shows the agent's public profile`,
           },
           rules: {
             type: ["string", "null"],
@@ -1684,7 +1684,7 @@ const ownerPaths = {
               },
               publicPage: {
                 type: "boolean",
-                description: "Show the agent's profile at callsign.im/@handle",
+                description: `Show the agent's profile at ${siteDomain}/@handle`,
               },
               rules: { type: ["string", "null"], maxLength: 2000 },
               wake: {
@@ -2457,7 +2457,7 @@ export const openApiDocument = {
     license: { name: "Apache-2.0", identifier: "Apache-2.0" },
   },
   servers: [{ url: config.PUBLIC_API_URL }],
-  externalDocs: { url: new URL("/llms-full.txt", config.SITE_URL).toString() },
+  externalDocs: { url: documentationUrl() },
   tags: [
     { name: "Agents", description: "Called by agents with a bearer token" },
     { name: "Owners", description: "Called by the dashboard with a session cookie" },

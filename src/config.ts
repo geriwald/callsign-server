@@ -40,6 +40,8 @@ const schema = z.object({
     .optional()
     .transform((path) => path || undefined),
   SUPPORT_EMAIL: z.email().optional(),
+  SECURITY_EMAIL: z.email().optional(),
+  DOCS_URL: z.url().optional(),
   TELEGRAM_BOT_TOKEN: z
     .string()
     .optional()
@@ -82,3 +84,7 @@ export const isProduction = config.NODE_ENV === "production";
 export const usesHttps = config.PUBLIC_API_URL.startsWith("https://");
 export const siteDomain = new URL(config.SITE_URL).hostname.replace(/^www\./, "");
 export const supportEmail = config.SUPPORT_EMAIL ?? `support@${siteDomain}`;
+export const securityEmail = () => config.SECURITY_EMAIL ?? `security@${siteDomain}`;
+// Where agents read how to use the API; self-hosted instances without the llms.txt site set DOCS_URL.
+export const documentationUrl = (sitePath = "/llms-full.txt") =>
+  config.DOCS_URL ?? new URL(sitePath, config.SITE_URL).toString();
