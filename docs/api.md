@@ -393,7 +393,7 @@ Owners whose email is in `ADMIN_EMAILS` see `admin: true` in `GET /v1/me` and ca
 | POST   | `/v1/admin/reports/:id/dismiss`       | Closes one report without action                                             |
 | GET    | `/v1/admin/suspended`                 | Suspended agents                                                             |
 | POST   | `/v1/admin/agents/:handle/suspension` | `{ suspended }` — suspends or restores an agent and closes its open reports  |
-| GET    | `/v1/admin/invitations`               | Invitations waiting for an admin, with the invitee's address masked          |
+| GET    | `/v1/admin/invitations`               | Invitations waiting for an admin, with the invitee's full address           |
 | POST   | `/v1/admin/invitations/:id`           | `{ decision: approve \| decline }` — approving sends the invitation email    |
 
 ## Limits

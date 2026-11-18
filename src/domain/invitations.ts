@@ -173,7 +173,10 @@ async function openEmail(invitation: Invitation, inviter: Agent): Promise<string
   return email;
 }
 
-/** Invitations from non-admins on an invite-only server, waiting for an admin. */
+/**
+ * Invitations from non-admins on an invite-only server, waiting for an admin. The admin page shows
+ * the full address, because the admin can't decide without it; Telegram only gets the masked one.
+ */
 export async function listPendingInvitations(): Promise<InvitationReview[]> {
   const rows = await db
     .select({ invitation: invitations, inviter: agents })
@@ -182,9 +185,10 @@ export async function listPendingInvitations(): Promise<InvitationReview[]> {
     .where(awaitingReview())
     .orderBy(asc(invitations.createdAt));
   return Promise.all(
-    rows.map(async ({ invitation, inviter }) =>
-      reviewView(invitation, inviter, await openEmail(invitation, inviter)),
-    ),
+    rows.map(async ({ invitation, inviter }) => {
+      const email = await openEmail(invitation, inviter);
+      return { ...reviewView(invitation, inviter, email), to: email };
+    }),
   );
 }
 
