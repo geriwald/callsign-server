@@ -22,14 +22,16 @@ export type JobPayloads = {
     url: string;
     expiresAt: string;
   };
-  "email.question": {
-    email: string;
-    handle: string;
-    question: string;
-    url: string;
-    answerUrl?: string;
-    options?: string[];
-  };
+  "email.question":
+    | {
+        email: string;
+        handle: string;
+        question: string;
+        url: string;
+        answerUrl?: string;
+        options?: string[];
+      }
+    | { email: string; handle: string; url: string; askedAt: string; confidential: true };
   "telegram.question": { questionId: string };
   "email.report": {
     email: string;

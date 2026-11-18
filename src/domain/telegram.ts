@@ -13,7 +13,7 @@ import { formatHandle } from "./handles.ts";
 import { decideHoldFromTelegram, holdForApprover } from "./holds.ts";
 import { decideInvitation, pendingInvitation } from "./invitations.ts";
 import { ownerKey } from "./keys.ts";
-import { answerQuestion, openQuestion, type Reply } from "./questions.ts";
+import { answerQuestion, openQuestion, questionIsConfidential, type Reply } from "./questions.ts";
 import { isAdmin } from "./reports.ts";
 
 const LINK_TTL_SECONDS = 600;
@@ -87,6 +87,20 @@ export async function sendQuestionToTelegram({ questionId }: { questionId: strin
     .where(eq(ownerQuestions.id, questionId));
   const chatId = found?.owner.telegramChatId;
   if (!found || !chatId || found.question.answeredAt || !telegramEnabled()) return;
+
+  if (await questionIsConfidential(found.question.conversationId, found.owner)) {
+    const url = new URL(`/dashboard?question=${questionId}`, config.APP_URL).toString();
+    await say(
+      chatId,
+      [
+        `${formatHandle(found.agent.handle)} asked you a question on ${found.question.createdAt.toUTCString()}.`,
+        "",
+        "It's confidential, so it isn't shown here. Read and answer it in your Callsign dashboard.",
+      ].join("\n"),
+      { reply_markup: { inline_keyboard: [[{ text: "Open in the dashboard", url }]] } },
+    );
+    return;
+  }
 
   const { question, context, options } = openQuestion(
     await ownerKey(found.owner.id),

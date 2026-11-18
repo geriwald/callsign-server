@@ -144,7 +144,21 @@ export const handlers: Handlers = {
     });
   },
 
-  async "email.question"({ email, handle, question, url, answerUrl, options = [] }) {
+  async "email.question"(payload) {
+    if ("confidential" in payload) {
+      const { email, handle, url, askedAt } = payload;
+      await sendMail({
+        to: email,
+        subject: `${handle} has a question for you`,
+        text: [
+          `${handle} asked you a question on Callsign on ${new Date(askedAt).toUTCString()}.`,
+          "",
+          `It's confidential, so this email doesn't include it. Read and answer it in your dashboard: ${url}`,
+        ].join("\n"),
+      });
+      return;
+    }
+    const { email, handle, question, url, answerUrl, options = [] } = payload;
     const choices = answerUrl
       ? options.map((option, index) => `- ${option}: ${answerUrl}&option=${index}`)
       : [];

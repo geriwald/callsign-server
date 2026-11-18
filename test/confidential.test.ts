@@ -1,26 +1,83 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { config } from "../src/config.ts";
 import { db } from "../src/db/client.ts";
-import { ownerQuestions, owners, type Owner } from "../src/db/schema.ts";
+import { jobs, ownerQuestions, owners, type Owner } from "../src/db/schema.ts";
 import { createAgent } from "../src/domain/agents.ts";
+import { setConfidential } from "../src/domain/confidential.ts";
 import { createGroup, leaveGroup } from "../src/domain/groups.ts";
-import { sendMessage } from "../src/domain/messaging.ts";
+import { checkInbox, sendMessage } from "../src/domain/messaging.ts";
 import { createSession } from "../src/domain/owners.ts";
+import { answerQuestion, askOwner } from "../src/domain/questions.ts";
 import { createApp } from "../src/http/app.ts";
+import { processDueJobs } from "../src/jobs/runner.ts";
+import { sendMail, type Mail } from "../src/lib/mailer.ts";
 import { createAgentWithToken, createOwner, startServer } from "./helpers.ts";
+
+vi.mock("../src/lib/mailer.ts", () => ({ sendMail: vi.fn(async () => {}) }));
+
+// Every test that checks a leak sends this through each field and looks for it in what left.
+const MARKER = "ZEBRA-7731-SECRET";
+
+type TelegramCall = { method: string; body: Record<string, unknown> };
+const telegramCalls: TelegramCall[] = [];
+let nextMessageId = 100;
+const telegramApi = createServer((req, res) => {
+  let raw = "";
+  req.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+  req.on("end", () => {
+    const method = req.url?.split("/").at(-1) ?? "";
+    telegramCalls.push({ method, body: JSON.parse(raw || "{}") as Record<string, unknown> });
+    const result = method === "sendMessage" ? { message_id: nextMessageId++ } : true;
+    res
+      .writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ ok: true, result }));
+  });
+});
 
 const app = createApp();
 let server: Awaited<ReturnType<typeof startServer>>;
 
 beforeAll(async () => {
   server = await startServer();
+  await new Promise<void>((resolve) => telegramApi.listen(0, "127.0.0.1", resolve));
+  config.TELEGRAM_API_URL = `http://127.0.0.1:${(telegramApi.address() as AddressInfo).port}`;
 });
 
 afterAll(async () => {
+  config.TELEGRAM_BOT_TOKEN = undefined;
+  telegramApi.close();
   await server.close();
 });
+
+function mails(): Mail[] {
+  return vi.mocked(sendMail).mock.calls.map(([mail]) => mail);
+}
+
+function telegramMessages(): TelegramCall[] {
+  return telegramCalls.filter((call) => call.method === "sendMessage");
+}
+
+/** Everything that left the server for Telegram or the mail transport. */
+function outbound(): string {
+  return JSON.stringify({ telegram: telegramCalls, mail: mails() });
+}
+
+async function drainJobs() {
+  while ((await processDueJobs()) > 0);
+}
+
+async function linkTelegram(owner: Owner, chatId: string) {
+  await db.update(owners).set({ telegramChatId: chatId }).where(eq(owners.id, owner.id));
+}
+
+function resetOutbound() {
+  telegramCalls.splice(0);
+  vi.mocked(sendMail).mockClear();
+}
 
 async function mcp(token: string) {
   const client = new Client({ name: "confidential-test", version: "1.0.0" });
@@ -236,5 +293,104 @@ describe("questions about a conversation", () => {
     expect(rows.map((row) => row.conversationId).sort()).toEqual(
       [sent.conversationId, group?.id].sort(),
     );
+  });
+});
+
+describe("question notifications", () => {
+  beforeEach(() => {
+    config.TELEGRAM_BOT_TOKEN = "123:test";
+    resetOutbound();
+  });
+
+  afterEach(() => {
+    config.TELEGRAM_BOT_TOKEN = undefined;
+  });
+
+  const secretQuestion = {
+    question: `Can I share ${MARKER}?`,
+    context: `Background: ${MARKER}`,
+    options: [`Yes, share ${MARKER}`, "No"],
+  };
+
+  it("leaves the content out when another member keeps the conversation confidential", async () => {
+    const alice = await createAgentWithToken("alice_agent");
+    const bob = await createAgentWithToken("bob_agent");
+    await linkTelegram(alice.owner, "555");
+    await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
+    await setConfidential(bob.agent, "@alice_agent", true);
+
+    const asked = await askOwner(alice.agent, { ...secretQuestion, conversation: "@bob_agent" });
+    const queued = await db.select().from(jobs);
+    expect(JSON.stringify(queued)).not.toContain(MARKER);
+    await drainJobs();
+
+    expect(mails()).toHaveLength(1);
+    expect(telegramMessages()).toHaveLength(1);
+    expect(outbound()).not.toContain(MARKER);
+    const [mail] = mails();
+    expect(mail?.to).toBe(alice.owner.email);
+    expect(mail?.text).toContain(`/dashboard?question=${asked.id}`);
+    expect(mail?.text).not.toContain("/answer");
+    const [telegram] = telegramMessages();
+    expect(telegram?.body.text).toContain("@alice_agent");
+    expect(telegram?.body.reply_markup).toEqual({
+      inline_keyboard: [
+        [
+          {
+            text: "Open in the dashboard",
+            url: `http://localhost:3001/dashboard?question=${asked.id}`,
+          },
+        ],
+      ],
+    });
+
+    await answerQuestion(alice.owner.id, asked.id, { option: 1 });
+    expect((await checkInbox(alice.agent)).ownerAnswers).toMatchObject([{ answer: "No" }]);
+  });
+
+  it("follows the owner's default for a question about no conversation", async () => {
+    const alice = await createAgentWithToken("alice_agent");
+    await linkTelegram(alice.owner, "555");
+    await db.update(owners).set({ confidentialDefault: true }).where(eq(owners.id, alice.owner.id));
+    await askOwner(alice.agent, secretQuestion);
+    await drainJobs();
+    expect(mails()).toHaveLength(1);
+    expect(telegramMessages()).toHaveLength(1);
+    expect(outbound()).not.toContain(MARKER);
+
+    resetOutbound();
+    await db
+      .update(owners)
+      .set({ confidentialDefault: false })
+      .where(eq(owners.id, alice.owner.id));
+    await askOwner(alice.agent, secretQuestion);
+    await drainJobs();
+    expect(mails()[0]?.text).toContain(MARKER);
+    expect(telegramMessages()[0]?.body.text).toContain(MARKER);
+  });
+
+  it("notifies as before about a conversation that isn't confidential", async () => {
+    const alice = await createAgentWithToken("alice_agent");
+    await createAgentWithToken("bob_agent");
+    await linkTelegram(alice.owner, "555");
+    await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
+
+    const about = await askOwner(alice.agent, { ...secretQuestion, conversation: "@bob_agent" });
+    await drainJobs();
+    const withConversation = { mail: mails()[0], telegram: telegramMessages()[0]?.body };
+    resetOutbound();
+    const plain = await askOwner(alice.agent, secretQuestion);
+    await drainJobs();
+    const without = { mail: mails()[0], telegram: telegramMessages()[0]?.body };
+
+    // Only the ids and the one-time answer links differ.
+    const normalize = (value: unknown, id: string) =>
+      JSON.stringify(value)
+        .replaceAll(id, "ID")
+        .replace(/token=[\w-]+/g, "token=T");
+    expect(normalize(withConversation, about.id)).toBe(normalize(without, plain.id));
+    expect(withConversation.mail?.text).toContain(MARKER);
+    expect(withConversation.mail?.text).toContain("/answer?token=");
+    expect(JSON.stringify(withConversation.telegram)).toContain(`answer:${about.id}:0`);
   });
 });
