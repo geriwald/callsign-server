@@ -2,11 +2,21 @@ import { and, eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { config } from "../src/config.ts";
 import { db } from "../src/db/client.ts";
-import { agentRegistrations, jobs, loginTokens, owners } from "../src/db/schema.ts";
+import {
+  agentRegistrations,
+  invitations,
+  jobs,
+  loginTokens,
+  owners,
+  type Agent,
+} from "../src/db/schema.ts";
 import { createAgent } from "../src/domain/agents.ts";
 import { emailContact } from "../src/domain/email-bridge.ts";
 import { ensureHelloAgent } from "../src/domain/hello.ts";
+import { listContacts } from "../src/domain/contacts.ts";
 import { invitePerson } from "../src/domain/invitations.ts";
+import { checkInbox } from "../src/domain/messaging.ts";
+import { createSession } from "../src/domain/owners.ts";
 import { approveRegistration } from "../src/domain/registrations.ts";
 import { createApp } from "../src/http/app.ts";
 import { createAgentWithToken, createOwner } from "./helpers.ts";
@@ -64,17 +74,17 @@ function shape(body: unknown) {
     .replace(/\w\*\*\*@[\w.]+/g, "<masked>");
 }
 
+beforeEach(() => {
+  config.SIGNUP_MODE = "invite";
+  config.ADMIN_EMAILS.splice(0, Infinity, ADMIN);
+});
+
+afterEach(() => {
+  config.SIGNUP_MODE = "open";
+  config.ADMIN_EMAILS.splice(0);
+});
+
 describe("invite-only sign-up", () => {
-  beforeEach(() => {
-    config.SIGNUP_MODE = "invite";
-    config.ADMIN_EMAILS.splice(0, Infinity, ADMIN);
-  });
-
-  afterEach(() => {
-    config.SIGNUP_MODE = "open";
-    config.ADMIN_EMAILS.splice(0);
-  });
-
   it("answers a stranger's sign-in request like a member's and sends nothing", async () => {
     await createOwner("member@example.com");
     const member = await signIn("member@example.com");
@@ -170,5 +180,132 @@ describe("invite-only sign-up", () => {
     const { agent } = await createAgentWithToken("member_agent");
     await invitePerson(agent, { email: "guest@example.com" });
     expect(await jobsFor("email.invitation", "guest@example.com")).toHaveLength(1);
+  });
+});
+
+async function adminAgent() {
+  const owner = await createOwner(ADMIN);
+  const agent = await createAgent(owner, { handle: "admin_agent", product: "custom" });
+  const { sessionToken } = await createSession(db, owner.id);
+  return { agent, cookie: `callsign_session=${sessionToken}` };
+}
+
+type PendingInvitation = { id: string; from: string; fromName: string; to: string };
+
+async function pendingInvitations(cookie: string) {
+  const response = await json("GET", "/v1/admin/invitations", undefined, { cookie });
+  return { response, body: (await response.json()) as { invitations: PendingInvitation[] } };
+}
+
+function decide(cookie: string, id: string, decision: "approve" | "decline") {
+  return json("POST", `/v1/admin/invitations/${id}`, { decision }, { cookie });
+}
+
+async function noticeTexts(agent: Agent) {
+  return (await checkInbox(agent)).notices.map((notice) => `${notice.kind}: ${notice.text}`);
+}
+
+describe("invitations on an invite-only server", () => {
+  it("holds a member's invitation for an admin and sends it once approved", async () => {
+    const { agent: member, token, owner } = await createAgentWithToken("member_agent");
+    const sent = await json(
+      "POST",
+      "/v1/agent/invitations",
+      { email: "Guest@Example.com", note: "Join us here" },
+      { authorization: `Bearer ${token}` },
+    );
+    expect(sent.status).toBe(202);
+    const body = (await sent.json()) as { status: string; to: string; message: string };
+    expect(body).toMatchObject({ status: "pending_admin_approval", to: "g***@example.com" });
+    expect(body.message).toMatch(/admin/);
+    expect(await jobsFor("email.invitation", "guest@example.com")).toHaveLength(0);
+    expect((await signIn("guest@example.com")).token).toBeNull();
+
+    const { cookie } = await adminAgent();
+    const memberCookie = `callsign_session=${(await createSession(db, owner.id)).sessionToken}`;
+    expect((await pendingInvitations(memberCookie)).response.status).toBe(404);
+    const { body: listed } = await pendingInvitations(cookie);
+    expect(listed.invitations).toMatchObject([
+      { from: "@member_agent", fromName: "member_agent", to: "g***@example.com" },
+    ]);
+    expect(JSON.stringify(listed)).not.toContain("guest@example.com");
+
+    const approved = await decide(cookie, listed.invitations[0]?.id ?? "", "approve");
+    expect(approved.status).toBe(200);
+    const [email] = await jobsFor("email.invitation", "guest@example.com");
+    expect(email?.payload).toMatchObject({ from: "@member_agent", note: "Join us here" });
+    expect((await pendingInvitations(cookie)).body.invitations).toEqual([]);
+    expect(await noticeTexts(member)).toEqual([
+      expect.stringMatching(/^invitation\.approved: .*g\*\*\*@example\.com/),
+    ]);
+
+    const invite = new URL(String(email?.payload.url)).searchParams.get("invite");
+    expect((await app.request(`/v1/invitations/${invite}`)).status).toBe(200);
+    const { token: login } = await signIn("guest@example.com");
+    await verify(login ?? "");
+    const [guest] = await db.select().from(owners).where(eq(owners.email, "guest@example.com"));
+    if (!guest) throw new Error("no guest");
+    expect((await listContacts(guest.id)).map((c) => c.agent.handle)).toEqual(["@member_agent"]);
+  });
+
+  it("declines without any email and tells the inviting agent", async () => {
+    const { agent: member } = await createAgentWithToken("member_agent");
+    await invitePerson(member, { email: "guest@example.com" });
+    const { cookie } = await adminAgent();
+    const [pending] = (await pendingInvitations(cookie)).body.invitations;
+
+    const declined = await decide(cookie, pending?.id ?? "", "decline");
+    expect(declined.status).toBe(200);
+    expect(await jobsFor("email.invitation", "guest@example.com")).toHaveLength(0);
+    expect(await noticeTexts(member)).toEqual([
+      expect.stringMatching(/^invitation\.declined: .*g\*\*\*@example\.com/),
+    ]);
+    expect((await signIn("guest@example.com")).token).toBeNull();
+    expect((await decide(cookie, pending?.id ?? "", "approve")).status).toBe(404);
+    const [row] = await db.select().from(invitations);
+    expect(row?.email).toBeNull();
+  });
+
+  it("can't approve or use an invitation once it expired", async () => {
+    const { agent: member } = await createAgentWithToken("member_agent");
+    await invitePerson(member, { email: "guest@example.com" });
+    const { agent: admin, cookie } = await adminAgent();
+    await invitePerson(admin, { email: "other@example.com" });
+    const [pending] = (await pendingInvitations(cookie)).body.invitations;
+    await db.update(invitations).set({ expiresAt: new Date(Date.now() - 1000) });
+
+    expect((await pendingInvitations(cookie)).body.invitations).toEqual([]);
+    expect((await decide(cookie, pending?.id ?? "", "approve")).status).toBe(404);
+    expect(await jobsFor("email.invitation", "guest@example.com")).toHaveLength(0);
+    expect((await signIn("other@example.com")).token).toBeNull();
+  });
+
+  it("connects people who already have an account without asking an admin", async () => {
+    const { agent: member } = await createAgentWithToken("member_agent");
+    await createOwner("guest@example.com");
+    const sent = await invitePerson(member, { email: "guest@example.com" });
+    expect(sent).toMatchObject({ sentTo: "g***@example.com" });
+    expect(await jobsFor("email.invitation", "guest@example.com")).toHaveLength(1);
+  });
+
+  it("connects a waiting inviter only once an admin approves", async () => {
+    const { agent: member } = await createAgentWithToken("member_agent");
+    await invitePerson(member, { email: "guest@example.com" });
+    const { agent: admin, cookie } = await adminAgent();
+    await invitePerson(admin, { email: "guest@example.com" });
+    const { token } = await signIn("guest@example.com");
+    await verify(token ?? "");
+    const [guest] = await db.select().from(owners).where(eq(owners.email, "guest@example.com"));
+    if (!guest) throw new Error("no guest");
+    expect((await listContacts(guest.id)).map((c) => c.agent.handle)).toEqual(["@admin_agent"]);
+
+    const [pending] = (await pendingInvitations(cookie)).body.invitations;
+    await decide(cookie, pending?.id ?? "", "approve");
+    expect((await listContacts(guest.id)).map((c) => c.agent.handle).sort()).toEqual([
+      "@admin_agent",
+      "@member_agent",
+    ]);
+    const emails = await jobsFor("email.invitation", "guest@example.com");
+    expect(emails.map((job) => job.payload.existing)).toEqual([false, true]);
   });
 });

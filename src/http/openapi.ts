@@ -198,6 +198,8 @@ const schemas = {
           "action.expired",
           "action.failed",
           "tools.shared",
+          "invitation.approved",
+          "invitation.declined",
         ],
       },
       from: { type: ["string", "null"], description: "The agent that caused it" },
@@ -1443,6 +1445,21 @@ const agentPaths = {
           type: "object",
           properties: { sentTo: { type: "string" }, expiresAt: { type: "string" } },
         }),
+        "202": ok(
+          {
+            type: "object",
+            description:
+              "On an invite-only server, an invitation from a non-admin waits for an admin. Don't retry it: the outcome arrives in the inbox as a notice (invitation.approved or invitation.declined).",
+            properties: {
+              status: { type: "string", enum: ["pending_admin_approval"] },
+              sentTo: { type: "null" },
+              to: { type: "string", description: "The masked address" },
+              expiresAt: { type: "string", format: "date-time" },
+              message: { type: "string" },
+            },
+          },
+          "Held for an owner's approval, or waiting for an admin",
+        ),
       },
       {
         requestBody: {

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { createMiddleware } from "hono/factory";
 import { z } from "zod";
 import { AppError } from "../../domain/errors.ts";
+import { decideInvitation, listPendingInvitations } from "../../domain/invitations.ts";
 import {
   dismissReport,
   isAdmin,
@@ -34,4 +35,12 @@ export const adminRoutes = new Hono<AppEnv>()
   .post("/v1/admin/agents/:handle/suspension", async (c) => {
     const { suspended } = await parseBody(c, z.object({ suspended: z.boolean() }));
     return c.json({ agent: await setSuspended(c.req.param("handle"), suspended) });
+  })
+  .get("/v1/admin/invitations", async (c) =>
+    c.json({ invitations: await listPendingInvitations() }),
+  )
+  .post("/v1/admin/invitations/:id", async (c) => {
+    const { decision } = await parseBody(c, z.object({ decision: z.enum(["approve", "decline"]) }));
+    const id = parseWith(z.uuid(), c.req.param("id"));
+    return c.json({ invitation: await decideInvitation(id, decision) });
   });

@@ -41,6 +41,7 @@ import {
 } from "../domain/groups.ts";
 import { EMAIL_ADDRESS, isEmailHandle } from "../domain/handles.ts";
 import { activeHoldCount, isHeld } from "../domain/holds.ts";
+import { isPendingInvitation } from "../domain/invitations.ts";
 import { readPolicy } from "../domain/policy.ts";
 import type { ExposedTool } from "../domain/tool-access.ts";
 import {
@@ -1596,7 +1597,7 @@ export function buildMcpServer(session: McpSession): McpServer {
     ({ email, note }) =>
       run("invite_person", async () => {
         const sent = await agentInvitePerson(session, { email, note });
-        if (isHeld(sent)) return result(sent.message, sent);
+        if (isHeld(sent) || isPendingInvitation(sent)) return result(sent.message, sent);
         return result(
           `Invitation sent to ${sent.sentTo}. If they join, they'll reach you without a message request.`,
           sent,

@@ -25,7 +25,9 @@ export type NoticeKind =
   | "action.denied"
   | "action.expired"
   | "action.failed"
-  | "tools.shared";
+  | "tools.shared"
+  | "invitation.approved"
+  | "invitation.declined";
 
 export type NoticeView = {
   id: string;

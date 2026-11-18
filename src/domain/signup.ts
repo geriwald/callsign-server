@@ -12,7 +12,7 @@ export function inviteOnly(): boolean {
 
 /**
  * Whether this email may have an account. Always true on an open server; on an invite-only one,
- * only for owners, admins and people an unexpired invitation was sent to.
+ * only for owners, admins and people with an approved, unexpired invitation.
  */
 export async function canSignIn(executor: Executor, email: string): Promise<boolean> {
   if (!inviteOnly() || config.ADMIN_EMAILS.includes(email)) return true;
@@ -27,6 +27,7 @@ export async function canSignIn(executor: Executor, email: string): Promise<bool
     .where(
       and(
         eq(invitations.emailHash, invitationEmailHash(email)),
+        eq(invitations.status, "approved"),
         gt(invitations.expiresAt, new Date()),
       ),
     )

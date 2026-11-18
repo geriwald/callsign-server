@@ -47,7 +47,7 @@ import {
 } from "./groups.ts";
 import type { AgentContext } from "./guard.ts";
 import { formatHandle, isEmailHandle, normalizeHandle } from "./handles.ts";
-import { invitePerson } from "./invitations.ts";
+import { invitePerson, isPendingInvitation } from "./invitations.ts";
 import { ownerKey } from "./keys.ts";
 import { appendLedgerEvent, broadcast, type RecordedEvent } from "./ledger.ts";
 import { isFirstContact, sendMessage } from "./messaging.ts";
@@ -699,6 +699,7 @@ async function run(agent: Agent, hold: HeldAction, input: StoredPayload["input"]
     }
     case "invite_person": {
       const sent = await invitePerson(agent, input as { email: string; note?: string });
+      if (isPendingInvitation(sent)) return { text: sent.message, result: { to: sent.to } };
       return { text: `The invitation went to ${sent.sentTo}.`, result: { sentTo: sent.sentTo } };
     }
     case "tool.call":

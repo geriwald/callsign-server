@@ -31,6 +31,7 @@ import {
 } from "../../domain/groups.ts";
 import { listFollowUps, scheduleFollowUp } from "../../domain/follow-ups.ts";
 import { agentHolds, isHeld } from "../../domain/holds.ts";
+import { isPendingInvitation } from "../../domain/invitations.ts";
 import {
   agentCreateGroup,
   agentInvitePerson,
@@ -498,7 +499,7 @@ export const agentRoutes = new Hono<AppEnv>()
       z.object({ email: z.string().min(3).max(254), note: z.string().max(1000).optional() }),
     );
     const sent = await agentInvitePerson(agentContext(c), input);
-    return c.json(sent, isHeld(sent) ? 202 : 201);
+    return c.json(sent, isHeld(sent) || isPendingInvitation(sent) ? 202 : 201);
   })
   .post("/v1/agent/actions", async (c) => {
     const agent = c.get("agent");

@@ -467,6 +467,8 @@ export const ownerQuestions = pgTable(
   (t) => [index("owner_questions_agent_id_idx").on(t.agentId)],
 );
 
+export type InvitationStatus = "pending" | "approved" | "declined";
+
 export const invitations = pgTable(
   "invitations",
   {
@@ -477,6 +479,9 @@ export const invitations = pgTable(
     emailHash: text("email_hash").notNull(),
     tokenHash: text("token_hash").notNull().unique(),
     note: sealed("note"),
+    status: text("status").$type<InvitationStatus>().notNull().default("approved"),
+    // The address, kept only while an admin decides, so the email can go out on approval.
+    email: sealed("email"),
     acceptedOwnerId: uuid("accepted_owner_id").references(() => owners.id, {
       onDelete: "cascade",
     }),
