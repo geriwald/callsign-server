@@ -551,6 +551,69 @@ describe("held action notifications", () => {
   });
 });
 
+describe("every other notification", () => {
+  beforeEach(() => {
+    config.TELEGRAM_BOT_TOKEN = "123:test";
+    resetOutbound();
+  });
+
+  afterEach(() => {
+    config.TELEGRAM_BOT_TOKEN = undefined;
+  });
+
+  it("carries no content from a confidential conversation either", async () => {
+    const alice = await createAgentWithToken("alice_agent");
+    const bob = await createAgentWithToken("bob_agent");
+    await createAgentWithToken("carol_agent");
+    for (const { owner, agent } of [alice, bob]) {
+      await linkTelegram(owner, owner === alice.owner ? "555" : "556");
+      await db
+        .update(agents)
+        .set({ notifyEmail: `notify-${agent.handle}@example.com`, policy: { holds: {} } })
+        .where(eq(agents.id, agent.id));
+    }
+    await db.update(owners).set({ confidentialDefault: true }).where(eq(owners.id, alice.owner.id));
+
+    // Alice's default makes both conversations confidential from the start.
+    await sendMessage(alice.agent, { to: "@bob_agent", body: `Hello ${MARKER}` });
+    await createGroup(alice.agent, {
+      name: "launch",
+      members: ["@bob_agent"],
+      note: `Join us ${MARKER}`,
+    });
+    await sendMessage(bob.agent, { to: "@alice_agent", body: `Reply ${MARKER}` });
+    const asked = await askOwner(bob.agent, {
+      question: `Answer ${MARKER}?`,
+      conversation: "@alice_agent",
+    });
+    await drainJobs();
+    await answerQuestion(bob.owner.id, asked.id, `Yes ${MARKER}`);
+
+    const ctx = { agent: alice.agent, tokenId: "", client: "test" };
+    const extra = { extraReasons: ["groups" as const], skipPolicy: true };
+    await maybeHold(
+      ctx,
+      {
+        kind: "group.invite",
+        input: { group: "#launch", handles: ["@carol_agent"], note: MARKER },
+      },
+      extra,
+    );
+    await maybeHold(
+      ctx,
+      { kind: "invite_person", input: { email: "maria@example.com", note: MARKER } },
+      { extraReasons: ["invite_person"], skipPolicy: true },
+    );
+    await drainJobs();
+
+    expect(mails().length).toBeGreaterThanOrEqual(5);
+    expect(telegramMessages().length).toBeGreaterThanOrEqual(3);
+    expect(mails().some((mail) => mail.to === "notify-bob_agent@example.com")).toBe(true);
+    expect(outbound()).not.toContain(MARKER);
+    expect(outbound()).not.toContain("maria@example.com");
+  });
+});
+
 describe("agents in a confidential conversation", () => {
   const LINE = "don't repeat its content outside Callsign";
 
