@@ -81,7 +81,10 @@ export async function invitePerson(
       ...(existing && { acceptedOwnerId: existing.id, acceptedAt: new Date() }),
       ...(held && { status: "pending" as const, email: key.seal(email, emailContext(id)) }),
     });
-    if (held) return [];
+    if (held) {
+      await enqueue(tx, "invitation.review", { invitationId: id });
+      return [];
+    }
     return [
       await emailInvitation(tx, {
         inviter,

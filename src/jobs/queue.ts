@@ -49,6 +49,7 @@ export type JobPayloads = {
     url: string;
     existing: boolean;
   };
+  "invitation.review": { invitationId: string };
   "agent.webhook": AgentNotification;
   "agent.email": AgentNotification;
   "agent.wake": AgentNotification;

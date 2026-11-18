@@ -1,5 +1,7 @@
-import { and, eq, sql } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { config } from "../src/config.ts";
 import { db } from "../src/db/client.ts";
 import {
@@ -19,6 +21,8 @@ import { checkInbox } from "../src/domain/messaging.ts";
 import { createSession } from "../src/domain/owners.ts";
 import { approveRegistration } from "../src/domain/registrations.ts";
 import { createApp } from "../src/http/app.ts";
+import { processDueJobs } from "../src/jobs/runner.ts";
+import { telegramWebhookSecret } from "../src/lib/telegram.ts";
 import { createAgentWithToken, createOwner } from "./helpers.ts";
 
 const app = createApp();
@@ -307,5 +311,123 @@ describe("invitations on an invite-only server", () => {
     ]);
     const emails = await jobsFor("email.invitation", "guest@example.com");
     expect(emails.map((job) => job.payload.existing)).toEqual([false, true]);
+  });
+});
+
+describe("approving invitations from Telegram", () => {
+  type Call = { method: string; body: Record<string, unknown> };
+  const calls: Call[] = [];
+  const telegramApi = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (chunk: Buffer) => (raw += chunk.toString()));
+    req.on("end", () => {
+      calls.push({
+        method: req.url?.split("/").at(-1) ?? "",
+        body: JSON.parse(raw || "{}") as Record<string, unknown>,
+      });
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ ok: true, result: { message_id: 1 } }));
+    });
+  });
+
+  beforeAll(async () => {
+    await new Promise<void>((resolve) => telegramApi.listen(0, "127.0.0.1", resolve));
+    config.TELEGRAM_API_URL = `http://127.0.0.1:${(telegramApi.address() as AddressInfo).port}`;
+  });
+
+  afterAll(() => {
+    config.TELEGRAM_BOT_TOKEN = undefined;
+    telegramApi.close();
+  });
+
+  beforeEach(() => {
+    config.TELEGRAM_BOT_TOKEN = "123:test";
+    config.ADMIN_EMAILS.push("second-admin@example.com", "offline-admin@example.com");
+    calls.splice(0);
+  });
+
+  async function linkTelegram(email: string, chatId: string) {
+    await createOwner(email);
+    await db.update(owners).set({ telegramChatId: chatId }).where(eq(owners.email, email));
+  }
+
+  async function inviteFromMember() {
+    await linkTelegram(ADMIN, "555");
+    await linkTelegram("second-admin@example.com", "556");
+    await createOwner("offline-admin@example.com");
+    const { agent, owner } = await createAgentWithToken("member_agent");
+    await db.update(owners).set({ telegramChatId: "777" }).where(eq(owners.id, owner.id));
+    await invitePerson(agent, { email: "guest@example.com", note: "Our secret launch plan" });
+    while ((await processDueJobs()) > 0);
+    const [invitation] = await db.select().from(invitations);
+    return { agent, id: invitation?.id ?? "" };
+  }
+
+  function tap(chatId: number, data: string) {
+    return app.request("/v1/telegram/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": telegramWebhookSecret(),
+      },
+      body: JSON.stringify({
+        callback_query: {
+          id: "cb1",
+          data,
+          message: { message_id: 1, chat: { id: chatId, type: "private" }, text: "Invitation" },
+        },
+      }),
+    });
+  }
+
+  it("asks every admin who linked Telegram, without the address or the note", async () => {
+    const { id } = await inviteFromMember();
+    const sent = calls.filter((call) => call.method === "sendMessage");
+    expect(sent.map((call) => call.body.chat_id).sort()).toEqual(["555", "556"]);
+    for (const { body } of sent) {
+      expect(body.text).toContain("@member_agent");
+      expect(body.text).toContain("g***@example.com");
+      expect(body.text).not.toContain("guest@example.com");
+      expect(body.text).not.toContain("secret");
+      expect(body.reply_markup).toEqual({
+        inline_keyboard: [
+          [
+            { text: "Approve", callback_data: `ia:${id}` },
+            { text: "Decline", callback_data: `id:${id}` },
+          ],
+        ],
+      });
+    }
+  });
+
+  it("sends the invitation when an admin taps Approve", async () => {
+    const { agent, id } = await inviteFromMember();
+    await tap(556, `ia:${id}`);
+    expect(await jobsFor("email.invitation", "guest@example.com")).toHaveLength(1);
+    expect(calls.some((call) => call.method === "editMessageText")).toBe(true);
+    expect(await noticeTexts(agent)).toEqual([expect.stringMatching(/^invitation\.approved/)]);
+
+    await tap(555, `id:${id}`);
+    const answered = calls.findLast((call) => call.method === "answerCallbackQuery");
+    expect(answered?.body.text).toMatch(/No pending invitation/);
+  });
+
+  it("sends nothing when an admin taps Decline", async () => {
+    const { agent, id } = await inviteFromMember();
+    await tap(555, `id:${id}`);
+    expect(await jobsFor("email.invitation", "guest@example.com")).toHaveLength(0);
+    expect(await noticeTexts(agent)).toEqual([expect.stringMatching(/^invitation\.declined/)]);
+  });
+
+  it("ignores the buttons in a chat that isn't an admin's", async () => {
+    const { id } = await inviteFromMember();
+    await tap(777, `ia:${id}`);
+    expect(await jobsFor("email.invitation", "guest@example.com")).toHaveLength(0);
+    const [invitation] = await db
+      .select()
+      .from(invitations)
+      .where(inArray(invitations.status, ["pending"]));
+    expect(invitation?.id).toBe(id);
   });
 });

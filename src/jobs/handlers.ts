@@ -15,6 +15,7 @@ import { checkSighting } from "../domain/sightings.ts";
 import {
   sendAlertToTelegram,
   sendHoldToTelegram,
+  sendInvitationToTelegram,
   sendQuestionToTelegram,
 } from "../domain/telegram.ts";
 import { deliverEvent, fanOutEvent } from "../domain/subscriptions.ts";
@@ -237,6 +238,7 @@ export const handlers: Handlers = {
 
   "agent.wake": deliverWake,
   "telegram.question": sendQuestionToTelegram,
+  "invitation.review": sendInvitationToTelegram,
   "hello.reply": helloReply,
   "email.bridge": deliverBridgeEmail,
   "email.inbound": receiveBridgeEmail,

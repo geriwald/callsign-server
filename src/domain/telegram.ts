@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import { config, usesHttps } from "../config.ts";
 import { db } from "../db/client.ts";
 import { agents, ownerQuestions, owners, type Owner } from "../db/schema.ts";
@@ -11,8 +11,10 @@ import { acknowledgeAlert, alertForTelegram, freezeFromAlert } from "./alerts.ts
 import { AppError } from "./errors.ts";
 import { formatHandle } from "./handles.ts";
 import { decideHoldFromTelegram, holdForApprover } from "./holds.ts";
+import { decideInvitation, pendingInvitation } from "./invitations.ts";
 import { ownerKey } from "./keys.ts";
 import { answerQuestion, openQuestion, type Reply } from "./questions.ts";
+import { isAdmin } from "./reports.ts";
 
 const LINK_TTL_SECONDS = 600;
 const QUESTION_TTL_SECONDS = 7 * 86_400;
@@ -170,6 +172,54 @@ export async function sendHoldToTelegram({ holdId }: { holdId: string }) {
   });
 }
 
+export async function sendInvitationToTelegram({ invitationId }: { invitationId: string }) {
+  if (!telegramEnabled() || config.ADMIN_EMAILS.length === 0) return;
+  const invitation = await pendingInvitation(invitationId);
+  if (!invitation) return;
+  const admins = await db
+    .select({ chatId: owners.telegramChatId })
+    .from(owners)
+    .where(and(inArray(owners.email, config.ADMIN_EMAILS), isNotNull(owners.telegramChatId)));
+  const text = [
+    `${invitation.from} (${invitation.fromName}) wants to invite ${invitation.to} to Callsign.`,
+    "",
+    `Approve to send them the invitation email. If nobody decides by ${new Date(invitation.expiresAt).toUTCString()}, it expires.`,
+  ].join("\n");
+  for (const { chatId } of admins) {
+    if (!chatId) continue;
+    await say(chatId, text, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Approve", callback_data: `ia:${invitationId}` },
+            { text: "Decline", callback_data: `id:${invitationId}` },
+          ],
+        ],
+      },
+    });
+  }
+}
+
+async function actOnInvitation(chatId: string, invitationId: string, action: "ia" | "id") {
+  const owner = await ownerByChat(chatId);
+  if (!owner || !isAdmin(owner)) {
+    return { ok: false, text: "Only an admin of this server can decide invitations." } as const;
+  }
+  try {
+    const decided = await decideInvitation(invitationId, action === "ia" ? "approve" : "decline");
+    return action === "ia"
+      ? ({
+          ok: true,
+          toast: "Approved.",
+          text: `Approved. The invitation email went to ${decided.to}.`,
+        } as const)
+      : ({ ok: true, toast: "Declined.", text: `Declined. ${decided.from} was told.` } as const);
+  } catch (error) {
+    if (error instanceof AppError) return { ok: false, text: error.message } as const;
+    throw error;
+  }
+}
+
 async function actOnHold(chatId: string, holdId: string, action: "ha" | "hd") {
   const owner = await ownerByChat(chatId);
   if (!owner) return { ok: false, text: "This chat isn't connected to Callsign anymore." } as const;
@@ -247,14 +297,17 @@ async function onStart(chatId: string, code: string) {
 
 export async function handleTelegramUpdate(update: TelegramUpdate): Promise<void> {
   const callback = update.callback_query;
-  const [, action, targetId] = /^(fz|me|ha|hd):([0-9a-f-]{36})$/.exec(callback?.data ?? "") ?? [];
+  const [, action, targetId] =
+    /^(fz|me|ha|hd|ia|id):([0-9a-f-]{36})$/.exec(callback?.data ?? "") ?? [];
   if (callback && callback.message && action && targetId) {
     const { message } = callback;
     const chatId = String(message.chat.id);
     const outcome =
       action === "fz" || action === "me"
         ? await actOnAlert(chatId, targetId, action)
-        : await actOnHold(chatId, targetId, action as "ha" | "hd");
+        : action === "ia" || action === "id"
+          ? await actOnInvitation(chatId, targetId, action)
+          : await actOnHold(chatId, targetId, action as "ha" | "hd");
     await telegram("answerCallbackQuery", {
       callback_query_id: callback.id,
       text: outcome.ok ? outcome.toast : outcome.text,
