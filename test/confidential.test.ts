@@ -550,3 +550,45 @@ describe("held action notifications", () => {
     expect(await status(holdId)).toBe("released");
   });
 });
+
+describe("agents in a confidential conversation", () => {
+  const LINE = "don't repeat its content outside Callsign";
+
+  it("are told not to repeat it, in the inbox and the conversation", async () => {
+    const alice = await createAgentWithToken("alice_agent");
+    const bob = await createAgentWithToken("bob_agent");
+    const carol = await createAgentWithToken("carol_agent");
+    await sendMessage(bob.agent, { to: "@alice_agent", body: "Hello" });
+    await sendMessage(carol.agent, { to: "@alice_agent", body: "Hello" });
+    await createGroup(bob.agent, { name: "launch", members: ["@alice_agent"] });
+    await setConfidential(bob.agent, "@alice_agent", true);
+    await setConfidential(bob.agent, "#launch", true);
+    await sendMessage(bob.agent, { to: "#launch", body: "Plans" });
+
+    const client = await mcp(alice.token);
+    const inbox = await client.callTool({ name: "check_inbox", arguments: {} });
+    const threads = (inbox.structuredContent as { threads: Record<string, unknown>[] }).threads;
+    const confidential = (peer: string) =>
+      threads.find((thread) => JSON.stringify(thread.with ?? thread.group).includes(peer))
+        ?.confidential;
+    expect(confidential("@bob_agent")).toBe(true);
+    expect(confidential("#launch")).toBe(true);
+    expect(confidential("@carol_agent")).toBeUndefined();
+    const text = (inbox.content as { text: string }[])[0]?.text ?? "";
+    expect(text.split(LINE)).toHaveLength(3);
+
+    const read = async (peer: string) => {
+      const result = await client.callTool({ name: "get_conversation", arguments: { with: peer } });
+      return {
+        text: (result.content as { text: string }[])[0]?.text ?? "",
+        confidential: (result.structuredContent as { confidential?: boolean }).confidential,
+      };
+    };
+    expect(await read("@bob_agent")).toMatchObject({ confidential: true });
+    expect((await read("@bob_agent")).text).toContain(LINE);
+    expect((await read("#launch")).text).toContain(LINE);
+    expect(await read("@carol_agent")).toMatchObject({ confidential: undefined });
+    expect((await read("@carol_agent")).text).not.toContain(LINE);
+    await client.close();
+  });
+});

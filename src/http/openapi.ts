@@ -639,6 +639,12 @@ const schemas = {
               },
             },
             messages: { type: "array", items: ref("Message") },
+            confidential: {
+              type: "boolean",
+              const: true,
+              description:
+                "Present when a member's owner keeps the conversation confidential: don't repeat its content outside Callsign",
+            },
           },
         },
       },
@@ -658,6 +664,12 @@ const schemas = {
       theirAcceptance: { ...ref("Acceptance"), description: "Whether they accepted you" },
       readBy: { type: "array", items: ref("ReadReceipt") },
       messages: { type: "array", items: ref("Message") },
+      confidential: {
+        type: "boolean",
+        const: true,
+        description:
+          "Present when a member's owner keeps the conversation confidential: don't repeat its content outside Callsign",
+      },
     },
   },
   ContactStatus: {

@@ -30,6 +30,7 @@ import { uuidv7 } from "../lib/ids.ts";
 import { rateLimit } from "../lib/rate-limit.ts";
 import { assertCredentialLive, WAIT_ENDING_EVENTS } from "./access.ts";
 import { agentRules, assertReachable, findAgentByHandle, publicProfile } from "./agents.ts";
+import { confidentialityFor, isConfidential } from "./confidential.ts";
 import { contactsByAgent, type ContactRecord } from "./contacts.ts";
 import {
   bodyContext,
@@ -80,6 +81,7 @@ import { answersByIds, takeAnswers, type OwnerAnswer } from "./questions.ts";
 
 export {
   bumpInbox,
+  CONFIDENTIAL_NOTICE,
   forgetInbox,
   MAX_BODY_LENGTH,
   UNTRUSTED_NOTICE,
@@ -122,6 +124,7 @@ export type InboxThread = {
   contact: ContactContext;
   mentioned: boolean;
   messages: MessageView[];
+  confidential?: true;
 };
 
 export type Inbox = {
@@ -541,10 +544,17 @@ async function buildThreads(agent: Agent, found: FoundThread[]): Promise<InboxTh
     ),
   ]);
 
+  const flags = await confidentialityFor(
+    agent.ownerId,
+    found.map((f) => f.conversation.id),
+  );
   const threads: InboxThread[] = [];
   for (const f of found) {
     const handles = new Map(f.members.map((m) => [m.agentId, people.get(m.agentId)?.handle ?? ""]));
     const list = await messageViews(f.unread, handles, await conversationKey(f.conversation));
+    const confidential = flags.get(f.conversation.id)?.confidential && {
+      confidential: true as const,
+    };
     if (f.conversation.kind === "group") {
       threads.push({
         conversationId: f.conversation.id,
@@ -555,6 +565,7 @@ async function buildThreads(agent: Agent, found: FoundThread[]): Promise<InboxTh
         contact: null,
         mentioned: list.some((m) => mentions(m.body, agent.handle)),
         messages: list,
+        ...confidential,
       });
       continue;
     }
@@ -569,6 +580,7 @@ async function buildThreads(agent: Agent, found: FoundThread[]): Promise<InboxTh
       contact: contactContext(known.get(peer.id)),
       mentioned: false,
       messages: list,
+      ...confidential,
     });
   }
   return threads;
@@ -895,6 +907,7 @@ export async function getConversation(
     const group = await getGroupConversation(me, peerHandle, options);
     return {
       ...group,
+      ...((await isConfidential(group.conversationId)) && { confidential: true as const }),
       with: null,
       sameOwner: false,
       contact: null,
@@ -967,6 +980,7 @@ export async function getConversation(
         ]
       : [],
     messages: await messageViews(rows, handles, await conversationKey(conversation)),
+    ...((await isConfidential(conversation.id)) && { confidential: true as const }),
   };
 }
 

@@ -55,6 +55,7 @@ import {
 import type { OwnerSignals } from "../domain/identity.ts";
 import { serializeLedgerEvent } from "../domain/ledger.ts";
 import {
+  CONFIDENTIAL_NOTICE,
   decideContact,
   getConversation,
   logAction,
@@ -282,8 +283,12 @@ function describeMembers(group: GroupView): string {
     .join("; ");
 }
 
+function confidentialLine(conversation: object): string[] {
+  return "confidential" in conversation && conversation.confidential ? [CONFIDENTIAL_NOTICE] : [];
+}
+
 function describeGroupThread(thread: Inbox["threads"][number], group: GroupView): string {
-  const lines: string[] = [];
+  const lines: string[] = confidentialLine(thread);
   if (thread.kind === "invitation") {
     lines.push(
       group.status === "invited"
@@ -387,6 +392,7 @@ function describeInbox(inbox: Inbox): string {
     const who = describeSender(thread.with, thread.contact, thread.sameOwner);
     const lines = [
       thread.kind === "request" ? `Message request from ${who}:` : `New messages from ${who}:`,
+      ...confidentialLine(thread),
       ...(thread.sameOwner ? [] : [`About ${thread.with.handle}: ${describeOwner(thread.with)}.`]),
       ...contactRules(thread.with.handle, thread.contact),
       formatMessages(thread.messages),
@@ -888,6 +894,7 @@ export function buildMcpServer(session: McpSession): McpServer {
           const group = conversation.group;
           const text = [
             UNTRUSTED_NOTICE,
+            ...confidentialLine(conversation),
             ownerRules(conversation.rules),
             `Group ${group.name}${group.role === "admin" ? " (you are the admin)" : ""}. Members: ${describeMembers(group)}.`,
             ...(group.status === "invited"
@@ -919,6 +926,7 @@ export function buildMcpServer(session: McpSession): McpServer {
               ].join("\n")
             : [
                 UNTRUSTED_NOTICE,
+                ...confidentialLine(conversation),
                 ownerRules(conversation.rules),
                 ...contactRules(peer.handle, conversation.contact),
                 ...about,
