@@ -109,6 +109,7 @@ import {
 import { MAX_REPORT_DETAILS, REPORT_REASONS, reportAgent } from "../domain/reports.ts";
 import { eventCatalog, EventsError, subscribe, unsubscribe } from "../domain/subscriptions.ts";
 import { logger } from "../lib/logger.ts";
+import { serverIcons } from "../icons.ts";
 import { SERVER_NAME, VERSION } from "../version.ts";
 import { registerConnectedTools } from "./connected-tools.ts";
 import { describeHandoff, holdsLine, ownerRules, serverInstructions, wakeUpHint } from "./guide.ts";
@@ -566,7 +567,13 @@ export type McpSession = AgentContext & {
 export function buildMcpServer(session: McpSession): McpServer {
   const { agent, tokenId, client, rules, handoff } = session;
   const server = new McpServer(
-    { name: SERVER_NAME, title: "Callsign", version: VERSION },
+    {
+      name: SERVER_NAME,
+      title: "Callsign",
+      version: VERSION,
+      websiteUrl: config.SITE_URL,
+      icons: serverIcons(),
+    },
     {
       instructions: serverInstructions(agent, rules, handoff),
       capabilities: { events: {} } as ServerCapabilities,

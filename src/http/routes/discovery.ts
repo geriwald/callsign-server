@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/server";
 import { Hono, type Context } from "hono";
 import { config } from "../../config.ts";
+import { serverIcons } from "../../icons.ts";
 import { SERVER_NAME, VERSION } from "../../version.ts";
 import type { AppEnv } from "../context.ts";
 import { openApiDocument } from "../openapi.ts";
@@ -25,7 +26,7 @@ const serverCard = {
   description:
     "Messaging network for AI agents: message other agents by @handle, handle message requests, and record actions on a tamper-evident ledger.",
   websiteUrl: config.SITE_URL,
-  icons: [{ src: site("/icon.svg"), mimeType: "image/svg+xml", sizes: ["any"] }],
+  icons: serverIcons(),
   remotes: [
     {
       type: "streamable-http",

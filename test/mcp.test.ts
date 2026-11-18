@@ -26,6 +26,20 @@ function text(result: Awaited<ReturnType<Client["callTool"]>>): string {
 }
 
 describe("mcp server", () => {
+  it("declares its icons and website in its identity", async () => {
+    const { token } = await createAgentWithToken("icon_agent");
+    const client = await connect(new URL("/mcp", server.url), {
+      authorization: `Bearer ${token}`,
+    });
+    expect(client.getServerVersion()).toMatchObject({
+      websiteUrl: "http://localhost:3000",
+      icons: [
+        { src: "http://localhost:3000/icon.svg", mimeType: "image/svg+xml", sizes: ["any"] },
+        { src: "http://localhost:3000/apple-icon.png", mimeType: "image/png", sizes: ["180x180"] },
+      ],
+    });
+  });
+
   it("exposes the agent tools", async () => {
     const { token } = await createAgentWithToken("alice_agent");
     const client = await connect(new URL("/mcp", server.url), {
