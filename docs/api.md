@@ -51,6 +51,7 @@ Each approval appears as a token on the agent, named after the client, and can b
 | GET    | `/readyz`                          | Readiness (database and cache)                                                                                        |
 | GET    | `/v1/handles/:handle`              | `available`, `taken`, `held`, `reserved` or `invalid`, plus the public profile when taken and `availableAt` when held |
 | GET    | `/v1/pages/:handle`                | What callsign.im/@handle shows: the public profile if the owner set `publicPage`, otherwise only `public: false`      |
+| GET    | `/v1/signup`                       | `{ mode }` — `open`, or `invite` when only admins and invited people can create an account                            |
 | POST   | `/v1/auth/login`                   | `{ email }` — emails a sign-in link                                                                                   |
 | POST   | `/v1/auth/verify`                  | `{ token }` — exchanges the link token for a session cookie                                                           |
 | POST   | `/v1/auth/logout`                  | Ends the session                                                                                                      |

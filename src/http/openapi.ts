@@ -2245,6 +2245,20 @@ const publicPaths = {
       }),
     }),
   },
+  "/v1/signup": {
+    get: operation("Public", "Who may create an account on this server", {
+      "200": ok({
+        type: "object",
+        properties: {
+          mode: {
+            type: "string",
+            enum: ["open", "invite"],
+            description: "open: anyone; invite: only admins and people with an approved invitation",
+          },
+        },
+      }),
+    }),
+  },
   "/v1/register": {
     post: operation(
       "Public",

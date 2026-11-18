@@ -175,6 +175,12 @@ describe("invite-only sign-up", () => {
     expect(contact.handle).toBe("ana@northwind.test");
   });
 
+  it("tells the dashboard which mode the server runs in", async () => {
+    expect(await (await app.request("/v1/signup")).json()).toEqual({ mode: "invite" });
+    config.SIGNUP_MODE = "open";
+    expect(await (await app.request("/v1/signup")).json()).toEqual({ mode: "open" });
+  });
+
   it("changes nothing in open mode", async () => {
     config.SIGNUP_MODE = "open";
     const { token } = await signIn("stranger@example.com");

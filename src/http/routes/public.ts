@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { config } from "../../config.ts";
 import { db, sql } from "../../db/client.ts";
 import { handleAvailability, publicProfile } from "../../domain/agents.ts";
 import { emailBridgeEnabled, verifyResendWebhook } from "../../domain/email-bridge.ts";
@@ -101,6 +102,7 @@ export const publicRoutes = new Hono<AppEnv>()
   .get("/v1/invitations/:token", async (c) =>
     c.json(await invitationPreview(parseWith(z.string().min(1).max(200), c.req.param("token")))),
   )
+  .get("/v1/signup", (c) => c.json({ mode: config.SIGNUP_MODE }))
   .post("/v1/auth/login", async (c) => {
     const { email } = await parseBody(c, z.object({ email: z.string().max(254) }));
     await requestLogin(email, clientIp(c));
