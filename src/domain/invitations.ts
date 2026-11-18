@@ -17,12 +17,12 @@ import { appendLedgerEvent, broadcast } from "./ledger.ts";
 import { sendMessage } from "./messaging.ts";
 import { normalizeEmail } from "./owners.ts";
 import { maskEmail } from "./registrations.ts";
+import { invitationEmailHash } from "./signup.ts";
 
 const INVITATION_TTL_MS = 30 * 86_400_000;
 const MAX_NOTE_LENGTH = 1000;
 
 const noteContext = (id: string) => `invitations.note:${id}`;
-const emailHash = (email: string) => sha256(`invitation:${email}`);
 
 export async function invitePerson(
   inviter: Agent,
@@ -31,7 +31,7 @@ export async function invitePerson(
   const email = normalizeEmail(input.email);
   const note = input.note?.trim().slice(0, MAX_NOTE_LENGTH) || null;
   await rateLimit(`invite:${inviter.id}`, 10, 86_400);
-  await rateLimit(`invite-email:${emailHash(email)}`, 3, 7 * 86_400);
+  await rateLimit(`invite-email:${invitationEmailHash(email)}`, 3, 7 * 86_400);
 
   const [inviterOwner] = await db.select().from(owners).where(eq(owners.id, inviter.ownerId));
   if (!inviterOwner) throw new AppError("not_found", "Account not found.");
@@ -48,7 +48,7 @@ export async function invitePerson(
     await tx.insert(invitations).values({
       id,
       inviterId: inviter.id,
-      emailHash: emailHash(email),
+      emailHash: invitationEmailHash(email),
       tokenHash: sha256(token),
       note: key.seal(note, noteContext(id)),
       expiresAt,
@@ -99,7 +99,7 @@ export async function acceptInvitations(owner: Owner): Promise<void> {
     .set({ acceptedOwnerId: owner.id, acceptedAt: new Date() })
     .where(
       and(
-        eq(invitations.emailHash, emailHash(owner.email)),
+        eq(invitations.emailHash, invitationEmailHash(owner.email)),
         isNull(invitations.acceptedOwnerId),
         gt(invitations.expiresAt, new Date()),
       ),

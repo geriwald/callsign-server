@@ -27,7 +27,8 @@ import {
 import { AppError, isUniqueViolation } from "./errors.ts";
 import { assertClaimableHandle, formatHandle, normalizeHandle } from "./handles.ts";
 import { appendLedgerEvent, broadcast } from "./ledger.ts";
-import { createSession, normalizeEmail, upsertOwner } from "./owners.ts";
+import { createSession, normalizeEmail, signUpOwner } from "./owners.ts";
+import { canSignIn } from "./signup.ts";
 
 const REGISTRATION_TTL_MS = 24 * 3_600_000;
 const TOKEN_NAME = "Self-registration";
@@ -54,6 +55,8 @@ function approvalUrl(token: string): string {
 }
 
 async function sendApproval(executor: Executor, registration: AgentRegistration, token: string) {
+  // A registration naming someone who can't sign up stays pending, unseen, until it expires.
+  if (!(await canSignIn(executor, registration.ownerEmail))) return;
   await enqueue(executor, "email.approval", {
     email: registration.ownerEmail,
     handle: formatHandle(registration.handle),
@@ -213,7 +216,7 @@ export async function approveRegistration(
         .returning();
       if (!claimed) throw new AppError("not_found", "This registration has expired.");
 
-      const owner = await upsertOwner(tx, claimed.ownerEmail);
+      const owner = await signUpOwner(tx, claimed.ownerEmail);
       const { primary } = await reserveAgentSlot(tx, owner.id);
 
       const agentId = uuidv7();

@@ -10,6 +10,7 @@ import { rateLimit } from "../lib/rate-limit.ts";
 import { telegramEnabled } from "../lib/telegram.ts";
 import { AppError } from "./errors.ts";
 import { newOwnerKey } from "./keys.ts";
+import { canSignIn } from "./signup.ts";
 
 const LOGIN_TOKEN_TTL_MS = 15 * 60_000;
 export const SESSION_TTL_MS = 30 * 86_400_000;
@@ -28,6 +29,8 @@ export async function requestLogin(rawEmail: string, ip: string): Promise<void> 
   const email = normalizeEmail(rawEmail);
   await rateLimit(`login-ip:${ip}`, 20, 900);
   await rateLimit(`login-email:${email}`, 5, 900);
+  // Answers like a sent link either way, so nobody can test who is a member.
+  if (!(await canSignIn(db, email))) return;
 
   const token = randomToken();
   const url = new URL("/auth/verify", config.APP_URL);
@@ -64,7 +67,7 @@ export async function verifyLogin(
     }
 
     const existing = await findOwnerByEmail(tx, login.email);
-    const owner = existing ?? (await upsertOwner(tx, login.email));
+    const owner = existing ?? (await signUpOwner(tx, login.email));
     return { owner, created: !existing, ...(await createSession(tx, owner.id)) };
   });
 }
@@ -85,6 +88,14 @@ export async function upsertOwner(executor: Executor, email: string): Promise<Ow
   const owner = await findOwnerByEmail(executor, email);
   if (!owner) throw new Error("owner upsert returned no row");
   return owner;
+}
+
+/** The owner for a person signing up, created only if the sign-up mode lets them in. */
+export async function signUpOwner(executor: Executor, email: string): Promise<Owner> {
+  if (!(await canSignIn(executor, email))) {
+    throw new AppError("forbidden", "Sign-up on this server is by invitation only.");
+  }
+  return upsertOwner(executor, email);
 }
 
 export async function updateOwner(owner: Owner, fields: { showDomain?: boolean }): Promise<Owner> {
