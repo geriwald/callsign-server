@@ -35,6 +35,7 @@ import { sendMail } from "../lib/mailer.ts";
 import { networkOf, normalizeIp } from "../lib/network.ts";
 import { assertReachable, findAgentByHandle } from "./agents.ts";
 import { raiseAlert } from "./alerts.ts";
+import { confidentialByDefault, findConversation, isConfidential } from "./confidential.ts";
 import { bumpInbox } from "./conversations.ts";
 import { AppError } from "./errors.ts";
 import { reserveFiles, unreserveFiles } from "./files.ts";
@@ -147,6 +148,67 @@ function summarize(request: HoldRequest): string {
     case "tool.call":
       return `Use ${request.input.tool} with ${excerpt(JSON.stringify(request.input.arguments), 200)}`;
   }
+}
+
+/** What a held action is, without its content: no message text and no tool call arguments. */
+function outline(kind: HoldKind, input: StoredPayload["input"] | null): string {
+  if (!input) return "An action";
+  switch (kind) {
+    case "message": {
+      const { to, attachments } = input as Extract<HoldRequest, { kind: "message" }>["input"];
+      const files = attachments?.length ?? 0;
+      const target = isGroupRef(to)
+        ? `#${normalizeGroupName(to)}`
+        : formatHandle(normalizeHandle(to));
+      return `Message to ${target}${files > 0 ? ` with ${files} ${files === 1 ? "file" : "files"}` : ""}`;
+    }
+    case "group.create":
+      return `Create #${normalizeGroupName((input as { name: string }).name)}`;
+    case "group.invite":
+      return `Invite agents to #${normalizeGroupName((input as { group: string }).group)}`;
+    case "invite_person":
+      return "Invite someone to Callsign";
+    case "tool.call":
+      return `Use ${(input as { tool: string }).tool}`;
+  }
+}
+
+/**
+ * Whether a held action belongs to a confidential conversation. One that would start a
+ * conversation follows the defaults of the owners it would bring together, and anything else
+ * the defaults of the agent's owner and its approver.
+ */
+async function holdIsConfidential(
+  agent: Agent,
+  hold: HeldAction,
+  input: StoredPayload["input"] | null,
+): Promise<boolean> {
+  const ownerIds = [agent.ownerId, hold.approverOwnerId];
+  if (input && (hold.kind === "message" || hold.kind === "group.invite")) {
+    const to =
+      hold.kind === "message"
+        ? (input as { to: string }).to
+        : `#${normalizeGroupName((input as { group: string }).group)}`;
+    const conversation = await findConversation(agent, to);
+    if (conversation) return isConfidential(conversation.id);
+    const peer = isGroupRef(to) ? undefined : await findAgentByHandle(normalizeHandle(to));
+    return confidentialByDefault(peer ? [...ownerIds, peer.ownerId] : ownerIds);
+  }
+  if (input && hold.kind === "group.create") {
+    const members = await Promise.all(
+      (input as { members: string[] }).members.map((handle) =>
+        findAgentByHandle(normalizeHandle(handle)),
+      ),
+    );
+    return confidentialByDefault([...ownerIds, ...members.flatMap((m) => (m ? [m.ownerId] : []))]);
+  }
+  return confidentialByDefault(ownerIds);
+}
+
+function storedInput(key: DataKey, hold: HeldAction): StoredPayload["input"] | null {
+  return hold.payload
+    ? (JSON.parse(key.open(hold.payload, payloadContext(hold.id))) as StoredPayload).input
+    : null;
 }
 
 // Actions in one lane are released in the order they were made.
@@ -621,7 +683,16 @@ export async function decideHoldFromTelegram(
   decision: Decision,
 ): Promise<HoldView> {
   const found = await ownedHold(owner.id, id);
-  if (decision === "approve") await assertOneTapApproval(owner.id);
+  if (decision === "approve") {
+    // Telegram never shows what a confidential action is, so nobody approves it from there.
+    const input = storedInput(await ownerKey(found.agent.ownerId), found.hold);
+    if (await holdIsConfidential(found.agent, found.hold, input)) {
+      throw new AppError("forbidden", "It's confidential: approve it from the dashboard.", {
+        reason: "confidential",
+      });
+    }
+    await assertOneTapApproval(owner.id);
+  }
   return decide(found, decision, "telegram");
 }
 
@@ -819,11 +890,15 @@ export async function holdForApprover(holdId: string) {
     .innerJoin(owners, eq(owners.id, heldActions.approverOwnerId))
     .where(eq(heldActions.id, holdId));
   if (!found || found.hold.status !== "pending") return null;
+  const key = await ownerKey(found.agent.ownerId);
+  const input = storedInput(key, found.hold);
   return {
     owner: found.owner,
-    view: holdView(await ownerKey(found.agent.ownerId), found.hold, found.agent.handle),
+    view: holdView(key, found.hold, found.agent.handle),
     passkey: await ownerHasPasskeys(found.owner.id),
     dashboard: new URL("/dashboard/approvals", config.APP_URL).toString(),
+    confidential: await holdIsConfidential(found.agent, found.hold, input),
+    outline: outline(found.hold.kind, input),
   };
 }
 
@@ -837,6 +912,23 @@ export async function emailHold({
   const found = await holdForApprover(holdId);
   if (!found) return;
   const { owner, view, passkey, dashboard } = found;
+  if (found.confidential) {
+    // The approval link opens the action without a sign-in, so it stays out of the email.
+    await sendMail({
+      to: owner.email,
+      subject: `${view.agent} is waiting for your approval`,
+      text: [
+        `${view.agent} wants to do this, and your rules hold it until you decide: ${found.outline}.`,
+        "",
+        `It's held because ${view.why.join(" and ")}.`,
+        "",
+        `It's confidential, so this email doesn't include the details. Review it in your dashboard: ${dashboard}`,
+        "",
+        `If nobody decides by ${new Date(view.expiresAt).toUTCString()}, it expires and doesn't happen.`,
+      ].join("\n"),
+    });
+    return;
+  }
   await sendMail({
     to: owner.email,
     subject: `${view.agent} is waiting for your approval`,

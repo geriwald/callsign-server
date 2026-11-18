@@ -5,16 +5,19 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { config } from "../src/config.ts";
 import { db } from "../src/db/client.ts";
-import { jobs, ownerQuestions, owners, type Owner } from "../src/db/schema.ts";
+import { agents, heldActions, jobs, ownerQuestions, owners, type Owner } from "../src/db/schema.ts";
 import { createAgent } from "../src/domain/agents.ts";
 import { setConfidential } from "../src/domain/confidential.ts";
 import { createGroup, leaveGroup } from "../src/domain/groups.ts";
+import { maybeHold } from "../src/domain/holds.ts";
 import { checkInbox, sendMessage } from "../src/domain/messaging.ts";
 import { createSession } from "../src/domain/owners.ts";
 import { answerQuestion, askOwner } from "../src/domain/questions.ts";
 import { createApp } from "../src/http/app.ts";
 import { processDueJobs } from "../src/jobs/runner.ts";
+import { uuidv7 } from "../src/lib/ids.ts";
 import { sendMail, type Mail } from "../src/lib/mailer.ts";
+import { telegramWebhookSecret } from "../src/lib/telegram.ts";
 import { createAgentWithToken, createOwner, startServer } from "./helpers.ts";
 
 vi.mock("../src/lib/mailer.ts", () => ({ sendMail: vi.fn(async () => {}) }));
@@ -392,5 +395,158 @@ describe("question notifications", () => {
     expect(withConversation.mail?.text).toContain(MARKER);
     expect(withConversation.mail?.text).toContain("/answer?token=");
     expect(JSON.stringify(withConversation.telegram)).toContain(`answer:${about.id}:0`);
+  });
+});
+
+describe("held action notifications", () => {
+  beforeEach(() => {
+    config.TELEGRAM_BOT_TOKEN = "123:test";
+    resetOutbound();
+  });
+
+  afterEach(() => {
+    config.TELEGRAM_BOT_TOKEN = undefined;
+  });
+
+  async function withPolicy(handle: string, holds: Record<string, unknown>) {
+    const created = await createAgentWithToken(handle);
+    await db.update(agents).set({ policy: { holds } }).where(eq(agents.id, created.agent.id));
+    const [agent] = await db.select().from(agents).where(eq(agents.id, created.agent.id));
+    await linkTelegram(created.owner, "555");
+    return { ...created, agent: agent! };
+  }
+
+  async function holdMessage(token: string, to: string) {
+    const res = await asAgent(token, "/v1/agent/messages", { to, body: `Pricing: ${MARKER}` });
+    expect(res.status).toBe(202);
+    return ((await res.json()) as { holdId: string }).holdId;
+  }
+
+  function telegramUpdate(update: object) {
+    return app.request("/v1/telegram/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-telegram-bot-api-secret-token": telegramWebhookSecret(),
+      },
+      body: JSON.stringify(update),
+    });
+  }
+
+  async function tap(holdId: string, action: "ha" | "hd") {
+    telegramCalls.splice(0);
+    await telegramUpdate({
+      callback_query: {
+        id: `cb-${action}`,
+        data: `${action}:${holdId}`,
+        message: { message_id: 100, chat: { id: 555, type: "private" }, text: "held" },
+      },
+    });
+    return telegramCalls.find((call) => call.method === "answerCallbackQuery")?.body.text;
+  }
+
+  async function status(holdId: string) {
+    const [row] = await db.select().from(heldActions).where(eq(heldActions.id, holdId));
+    return row?.status;
+  }
+
+  it("leaves the message out when another member keeps the conversation confidential", async () => {
+    const alice = await withPolicy("alice_agent", { hourlyMessages: 1 });
+    const bob = await createAgentWithToken("bob_agent");
+    await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
+    await createGroup(alice.agent, { name: "launch", members: ["@bob_agent"] });
+    await setConfidential(bob.agent, "@alice_agent", true);
+    await setConfidential(bob.agent, "#launch", true);
+
+    const direct = await holdMessage(alice.token, "@bob_agent");
+    const group = await holdMessage(alice.token, "#launch");
+    await drainJobs();
+
+    expect(mails()).toHaveLength(2);
+    expect(telegramMessages()).toHaveLength(2);
+    expect(outbound()).not.toContain(MARKER);
+    const texts = mails().map((mail) => mail.text);
+    expect(texts.join()).toContain("Message to @bob_agent.");
+    expect(texts.join()).toContain("Message to #launch.");
+    expect(texts.every((text) => text.includes("http://localhost:3001/dashboard/approvals"))).toBe(
+      true,
+    );
+    expect(texts.join()).not.toContain("/approve?token=");
+    const toBob = telegramMessages().find((call) => String(call.body.text).includes("@bob_agent"));
+    expect(toBob?.body.reply_markup).toEqual({
+      inline_keyboard: [
+        [{ text: "Decline", callback_data: `hd:${direct}` }],
+        [{ text: "Open in the dashboard", url: "http://localhost:3001/dashboard/approvals" }],
+      ],
+    });
+
+    expect(await tap(direct, "ha")).toMatch(/dashboard/);
+    expect(await status(direct)).toBe("pending");
+    expect(await tap(group, "hd")).toBe("Declined.");
+    expect(await status(group)).toBe("denied");
+    expect(outbound()).not.toContain(MARKER);
+  });
+
+  it("follows the defaults for a first message, which would start a conversation", async () => {
+    const alice = await withPolicy("alice_agent", { firstContact: true });
+    const bob = await createAgentWithToken("bob_agent");
+    await createAgentWithToken("carol_agent");
+    await db.update(owners).set({ confidentialDefault: true }).where(eq(owners.id, bob.owner.id));
+
+    const toBob = await holdMessage(alice.token, "@bob_agent");
+    await drainJobs();
+    expect(outbound()).not.toContain(MARKER);
+    expect(await tap(toBob, "ha")).toMatch(/dashboard/);
+    expect(await status(toBob)).toBe("pending");
+
+    resetOutbound();
+    await holdMessage(alice.token, "@carol_agent");
+    await drainJobs();
+    expect(mails()[0]?.text).toContain(MARKER);
+    expect(telegramMessages()[0]?.body.text).toContain(MARKER);
+  });
+
+  it("leaves tool call arguments out when the owner's default is confidential", async () => {
+    const alice = await withPolicy("alice_agent", {});
+    await db.update(owners).set({ confidentialDefault: true }).where(eq(owners.id, alice.owner.id));
+    const held = await maybeHold(
+      { agent: alice.agent, tokenId: "", client: "test" },
+      {
+        kind: "tool.call",
+        input: { tool: "send_invoice", arguments: { note: MARKER }, connectionId: uuidv7() },
+        write: true,
+      },
+      { extraReasons: ["tool_write"], skipPolicy: true },
+    );
+    await drainJobs();
+    expect(mails()).toHaveLength(1);
+    expect(telegramMessages()).toHaveLength(1);
+    expect(outbound()).not.toContain(MARKER);
+    expect(telegramMessages()[0]?.body.text).toContain("send_invoice");
+    expect(await tap(held!.holdId, "ha")).toMatch(/dashboard/);
+    expect(await tap(held!.holdId, "hd")).toBe("Declined.");
+    expect(await status(held!.holdId)).toBe("denied");
+  });
+
+  it("notifies as before in a conversation that isn't confidential", async () => {
+    const alice = await withPolicy("alice_agent", { hourlyMessages: 1 });
+    await createAgentWithToken("bob_agent");
+    await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
+
+    const holdId = await holdMessage(alice.token, "@bob_agent");
+    await drainJobs();
+    expect(mails()[0]?.text).toContain(`Message to @bob_agent: “Pricing: ${MARKER}”`);
+    expect(mails()[0]?.text).toContain("/approve?token=");
+    expect(telegramMessages()[0]?.body.text).toContain(MARKER);
+    expect(telegramMessages()[0]?.body.reply_markup).toEqual({
+      inline_keyboard: [
+        [
+          { text: "Approve", callback_data: `ha:${holdId}` },
+          { text: "Decline", callback_data: `hd:${holdId}` },
+        ],
+      ],
+    });
+    expect(await tap(holdId, "ha")).toBe("Approved.");
+    expect(await status(holdId)).toBe("released");
   });
 });

@@ -162,6 +162,27 @@ export async function sendHoldToTelegram({ holdId }: { holdId: string }) {
   const chatId = found?.owner.telegramChatId;
   if (!found || !chatId) return;
   const { view, passkey, dashboard } = found;
+  if (found.confidential) {
+    await say(
+      chatId,
+      [
+        `${view.agent} has been waiting for your approval since ${new Date(view.createdAt).toUTCString()}: ${found.outline}.`,
+        "",
+        `Your rules hold it because ${view.why.join(" and ")}.`,
+        "",
+        "It's confidential, so the details aren't shown here. Approve it in your Callsign dashboard, or decline it now.",
+      ].join("\n"),
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Decline", callback_data: `hd:${holdId}` }],
+            [{ text: "Open in the dashboard", url: dashboard }],
+          ],
+        },
+      },
+    );
+    return;
+  }
   const text = [
     `${view.agent} wants to do this:`,
     "",
