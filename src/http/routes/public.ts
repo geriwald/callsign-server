@@ -7,7 +7,7 @@ import { emailBridgeEnabled, verifyResendWebhook } from "../../domain/email-brid
 import { AppError } from "../../domain/errors.ts";
 import { formatHandle } from "../../domain/handles.ts";
 import { acceptInvitations, invitationPreview } from "../../domain/invitations.ts";
-import { requestLogin, revokeSession, verifyLogin } from "../../domain/owners.ts";
+import { requestLogin, revokeSession, verifyLogin, verifyLoginCode } from "../../domain/owners.ts";
 import { agentPage } from "../../domain/pages.ts";
 import { answerByLink, answerLinkView, MAX_OPTIONS } from "../../domain/questions.ts";
 import { networkStats } from "../../domain/stats.ts";
@@ -111,6 +111,16 @@ export const publicRoutes = new Hono<AppEnv>()
   .post("/v1/auth/verify", async (c) => {
     const { token } = await parseBody(c, z.object({ token: z.string().min(1).max(200) }));
     const { owner, created, sessionToken: session } = await verifyLogin(token);
+    if (created) await acceptInvitations(owner);
+    setSessionCookie(c, session);
+    return c.json({ owner: { id: owner.id, email: owner.email }, created });
+  })
+  .post("/v1/auth/verify-code", async (c) => {
+    const { email, code } = await parseBody(
+      c,
+      z.object({ email: z.string().max(254), code: z.string().min(1).max(12) }),
+    );
+    const { owner, created, sessionToken: session } = await verifyLoginCode(email, code);
     if (created) await acceptInvitations(owner);
     setSessionCookie(c, session);
     return c.json({ owner: { id: owner.id, email: owner.email }, created });

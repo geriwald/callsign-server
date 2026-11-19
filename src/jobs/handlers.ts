@@ -84,7 +84,7 @@ function passkeyMail(
 }
 
 export const handlers: Handlers = {
-  async "email.login"({ email, url }) {
+  async "email.login"({ email, url, code }) {
     await sendMail({
       to: email,
       subject: "Your Callsign sign-in link",
@@ -93,6 +93,9 @@ export const handlers: Handlers = {
         "",
         url,
         "",
+        ...(code
+          ? [`In the Callsign app on your home screen, enter this code instead: ${code}`, ""]
+          : []),
         "If you didn't request it, you can ignore this email.",
       ].join("\n"),
     });

@@ -13,7 +13,7 @@ export type PasskeyChange =
   "added" | "removed" | "reset_requested" | "reset_cancelled" | "reset_done";
 
 export type JobPayloads = {
-  "email.login": { email: string; url: string };
+  "email.login": { email: string; url: string; code?: string };
   "email.approval": {
     email: string;
     handle: string;

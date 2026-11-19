@@ -51,6 +51,8 @@ export const loginTokens = pgTable("login_tokens", {
   id: uuid("id").primaryKey(),
   email: text("email").notNull(),
   tokenHash: text("token_hash").notNull().unique(),
+  // The six-digit code in the same email, for apps that can't open the link (an iPhone web app).
+  codeHash: text("code_hash"),
   expiresAt: timestamptz("expires_at").notNull(),
   consumedAt: timestamptz("consumed_at"),
   createdAt: createdAt(),

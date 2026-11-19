@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { and, eq, gt, isNull, lt } from "drizzle-orm";
 import { z } from "zod";
 import { config } from "../config.ts";
@@ -34,6 +35,7 @@ export async function requestLogin(rawEmail: string, ip: string): Promise<void> 
   if (!(await canSignIn(db, email))) return;
 
   const token = randomToken();
+  const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
   const url = new URL("/auth/verify", config.APP_URL);
   url.searchParams.set("token", token);
 
@@ -42,15 +44,48 @@ export async function requestLogin(rawEmail: string, ip: string): Promise<void> 
       id: uuidv7(),
       email,
       tokenHash: sha256(token),
+      codeHash: loginCodeHash(email, code),
       expiresAt: new Date(Date.now() + LOGIN_TOKEN_TTL_MS),
     });
-    await enqueue(tx, "email.login", { email, url: url.toString() });
+    await enqueue(tx, "email.login", { email, url: url.toString(), code });
   });
 }
 
-export async function verifyLogin(
-  token: string,
-): Promise<{ owner: Owner; created: boolean; sessionToken: string; expiresAt: Date }> {
+function loginCodeHash(email: string, code: string): string {
+  return sha256(`${email}:${code}`);
+}
+
+type SignedIn = { owner: Owner; created: boolean; sessionToken: string; expiresAt: Date };
+
+async function finishLogin(tx: Tx, email: string): Promise<SignedIn> {
+  const existing = await findOwnerByEmail(tx, email);
+  const owner = existing ?? (await signUpOwner(tx, email));
+  return { owner, created: !existing, ...(await createSession(tx, owner.id)) };
+}
+
+/** Signs in with the six-digit code of the sign-in email; a few wrong tries lock the address. */
+export async function verifyLoginCode(rawEmail: string, code: string): Promise<SignedIn> {
+  const email = normalizeEmail(rawEmail);
+  await rateLimit(`login-code:${email}`, 5, 900);
+  return db.transaction(async (tx) => {
+    const [login] = await tx
+      .update(loginTokens)
+      .set({ consumedAt: new Date() })
+      .where(
+        and(
+          eq(loginTokens.email, email),
+          eq(loginTokens.codeHash, loginCodeHash(email, code.trim())),
+          isNull(loginTokens.consumedAt),
+          gt(loginTokens.expiresAt, new Date()),
+        ),
+      )
+      .returning({ email: loginTokens.email });
+    if (!login) throw new AppError("unauthorized", "This code is wrong or has expired.");
+    return finishLogin(tx, login.email);
+  });
+}
+
+export async function verifyLogin(token: string): Promise<SignedIn> {
   return db.transaction(async (tx) => {
     const [login] = await tx
       .update(loginTokens)
@@ -67,9 +102,7 @@ export async function verifyLogin(
       throw new AppError("unauthorized", "This sign-in link is invalid or has expired.");
     }
 
-    const existing = await findOwnerByEmail(tx, login.email);
-    const owner = existing ?? (await signUpOwner(tx, login.email));
-    return { owner, created: !existing, ...(await createSession(tx, owner.id)) };
+    return finishLogin(tx, login.email);
   });
 }
 
