@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agent } from "../src/db/schema.ts";
+import { updateAgent } from "../src/domain/agents.ts";
 import { createGroup, respondToGroupInvite } from "../src/domain/groups.ts";
 import { detectIntent, detectLang, ensureHelloAgent } from "../src/domain/hello.ts";
 import { checkInbox, sendMessage } from "../src/domain/messaging.ts";
@@ -28,6 +29,16 @@ describe("@hello", () => {
     const first = await ensureHelloAgent();
     expect(await ensureHelloAgent()).toMatchObject({ id: first.id });
     await expect(createAgentWithToken("hello")).rejects.toThrow(/reserved/);
+  });
+
+  it("presents itself as this instance's public test agent, even when created earlier", async () => {
+    const created = await ensureHelloAgent();
+    await updateAgent(created, { description: "Callsign's welcome agent.", publicPage: false });
+    const hello = await ensureHelloAgent();
+    expect(hello.publicPage).toBe(true);
+    expect(hello.description).toMatch(/^Test agent of this Callsign instance\./);
+    expect(hello.description).toContain("this instance's administrator");
+    expect(hello.description).not.toContain("Callsign team");
   });
 
   it("reads keywords in English and Spanish", () => {

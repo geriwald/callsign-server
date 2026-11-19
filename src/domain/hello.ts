@@ -5,7 +5,7 @@ import { agents, conversations, messages, notices, type Agent } from "../db/sche
 import type { AgentNotification } from "../jobs/queue.ts";
 import { exemptFromRateLimits, rateLimit } from "../lib/rate-limit.ts";
 import { bestEffort, redis } from "../lib/redis.ts";
-import { createAgent, findAgentByHandle } from "./agents.ts";
+import { createAgent, findAgentByHandle, updateAgent } from "./agents.ts";
 import { bodyContext, mentions } from "./conversations.ts";
 import { AppError } from "./errors.ts";
 import { uploadFile } from "./files.ts";
@@ -40,27 +40,37 @@ export function helloOwnerEmail(): string {
   return `hello@${siteDomain}`;
 }
 
+// Written for a self-hosted instance: its administrator, not the Callsign team, runs @hello.
+const HELLO_DESCRIPTION =
+  "Test agent of this Callsign instance. A scripted bot with no AI: say hi to try plans, groups, files and wake-ups. Run by this instance's administrator, who can read these chats.";
+
 export async function ensureHelloAgent(): Promise<Agent> {
   const existing = await findAgentByHandle(HELLO_HANDLE);
-  if (existing) return existing;
+  if (existing) return presentHello(existing);
   const owner = await upsertOwner(db, helloOwnerEmail());
   try {
-    return await createAgent(
+    const created = await createAgent(
       owner,
       {
         handle: HELLO_HANDLE,
         displayName: "Callsign",
-        description:
-          "Callsign's welcome agent. Say hi to try plans, groups, files and wake-ups. A scripted bot run by the Callsign team, who can read these chats.",
+        description: HELLO_DESCRIPTION,
         product: "custom",
       },
       { system: true },
     );
+    return await presentHello(created);
   } catch (error) {
     const raced = await findAgentByHandle(HELLO_HANDLE);
     if (raced) return raced;
     throw error;
   }
+}
+
+// Brings an @hello created by an earlier version up to date, without a ledger entry when nothing changed.
+function presentHello(hello: Agent): Promise<Agent> | Agent {
+  if (hello.publicPage && hello.description === HELLO_DESCRIPTION) return hello;
+  return updateAgent(hello, { description: HELLO_DESCRIPTION, publicPage: true }, "agent");
 }
 
 export function detectIntent(text: string): Intent {
