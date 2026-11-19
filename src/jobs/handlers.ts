@@ -1,4 +1,5 @@
 import { config, supportEmail } from "../config.ts";
+import { sendHoldPush, sendQuestionPush } from "../domain/push.ts";
 import { webhookSecret } from "../domain/agents.ts";
 import { sendAlertEmail } from "../domain/alerts.ts";
 import { syncConnection } from "../domain/connections.ts";
@@ -270,7 +271,9 @@ export const handlers: Handlers = {
   async "hold.notify"(payload) {
     await emailHold(payload);
     await sendHoldToTelegram(payload);
+    await sendHoldPush(payload);
   },
+  "push.question": sendQuestionPush,
   "hold.release": releaseApproved,
   async "connection.sync"(payload) {
     await syncConnection(payload);

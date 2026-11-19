@@ -42,10 +42,29 @@ export const owners = pgTable("owners", {
   // Where questions and approvals reach the owner; security alerts ignore these.
   answerEmail: boolean("answer_email").notNull().default(true),
   answerTelegram: boolean("answer_telegram").notNull().default(true),
+  // On only once a device has passed the question test, see push_subscriptions.tested_at.
+  answerPush: boolean("answer_push").notNull().default(false),
   // A confirmed address for questions and approvals; null means the sign-in address.
   answerEmailAddress: text("answer_email_address"),
   createdAt: createdAt(),
 });
+
+// One per browser or installed web app that agreed to receive push notifications.
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: uuid("id").primaryKey(),
+  ownerId: uuid("owner_id")
+    .notNull()
+    .references(() => owners.id, { onDelete: "cascade" }),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  label: text("label").notNull(),
+  // When a question test notification was tapped and opened the signed-in app.
+  testedAt: timestamptz("tested_at"),
+  createdAt: createdAt(),
+});
+
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
 
 export const loginTokens = pgTable("login_tokens", {
   id: uuid("id").primaryKey(),

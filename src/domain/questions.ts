@@ -145,6 +145,7 @@ export async function askOwner(
     if (targets.telegramChatId) {
       await enqueue(tx, "telegram.question", { questionId: id });
     }
+    if (targets.push) await enqueue(tx, "push.question", { questionId: id });
     const recorded = await appendLedgerEvent(tx, agent, {
       type: "owner.asked",
       actor: "agent",

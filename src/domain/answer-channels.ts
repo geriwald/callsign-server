@@ -1,8 +1,8 @@
 import { randomInt } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db/client.ts";
-import { owners, type Owner } from "../db/schema.ts";
+import { owners, pushSubscriptions, type Owner } from "../db/schema.ts";
 import { safeEqual, sha256 } from "../lib/crypto.ts";
 import { sendMail } from "../lib/mailer.ts";
 import { rateLimit } from "../lib/rate-limit.ts";
@@ -13,7 +13,11 @@ import { AppError } from "./errors.ts";
 const CODE_TTL_SECONDS = 15 * 60;
 const codeKey = (ownerId: string) => `answer-address:${ownerId}`;
 
-export type AnswerTargets = { email: string | null; telegramChatId: string | null };
+export type AnswerTargets = {
+  email: string | null;
+  telegramChatId: string | null;
+  push: boolean;
+};
 
 function telegramReachable(owner: Owner): boolean {
   return owner.telegramChatId !== null && telegramEnabled();
@@ -26,8 +30,10 @@ function telegramReachable(owner: Owner): boolean {
 export function answerTargets(owner: Owner): AnswerTargets {
   const telegramChatId =
     owner.answerTelegram && telegramReachable(owner) ? owner.telegramChatId : null;
-  const email = owner.answerEmail || !telegramChatId ? answerAddress(owner) : null;
-  return { email, telegramChatId };
+  // answerPush is only on while a tested device exists: losing the last one turns it off.
+  const push = owner.answerPush;
+  const email = owner.answerEmail || (!telegramChatId && !push) ? answerAddress(owner) : null;
+  return { email, telegramChatId, push };
 }
 
 export function answerAddress(owner: Owner): string {
@@ -38,9 +44,19 @@ export function answerView(owner: Owner) {
   return {
     email: owner.answerEmail,
     telegram: owner.answerTelegram && telegramReachable(owner),
+    push: owner.answerPush,
     address: answerAddress(owner),
     customAddress: owner.answerEmailAddress !== null,
   };
+}
+
+async function hasTestedDevice(ownerId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: pushSubscriptions.id })
+    .from(pushSubscriptions)
+    .where(and(eq(pushSubscriptions.ownerId, ownerId), isNotNull(pushSubscriptions.testedAt)))
+    .limit(1);
+  return row !== undefined;
 }
 
 async function save(owner: Owner, fields: Partial<Owner>): Promise<Owner> {
@@ -51,17 +67,28 @@ async function save(owner: Owner, fields: Partial<Owner>): Promise<Owner> {
 
 export async function setAnswerChannels(
   owner: Owner,
-  input: { email?: boolean | undefined; telegram?: boolean | undefined },
+  input: {
+    email?: boolean | undefined;
+    telegram?: boolean | undefined;
+    push?: boolean | undefined;
+  },
 ): Promise<Owner> {
   const email = input.email ?? owner.answerEmail;
   const wantsTelegram = input.telegram ?? (owner.answerTelegram && telegramReachable(owner));
+  const push = input.push ?? owner.answerPush;
   if (wantsTelegram && !telegramReachable(owner)) {
     throw new AppError("invalid_input", "Link Telegram before you choose it.");
   }
-  if (!email && !wantsTelegram) {
+  if (push && !owner.answerPush && !(await hasTestedDevice(owner.id))) {
+    throw new AppError(
+      "invalid_input",
+      "Test a question on a device before you choose the web app.",
+    );
+  }
+  if (!email && !wantsTelegram && !push) {
     throw new AppError("invalid_input", "Keep at least one way to answer your agents.");
   }
-  return save(owner, { answerEmail: email, answerTelegram: wantsTelegram });
+  return save(owner, { answerEmail: email, answerTelegram: wantsTelegram, answerPush: push });
 }
 
 export async function requestAnswerAddress(owner: Owner, address: string): Promise<void> {

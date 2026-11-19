@@ -17,7 +17,7 @@ function post(path: string, body: unknown) {
 async function loginCode(email: string): Promise<string> {
   expect((await post("/v1/auth/login", { email })).status).toBe(202);
   const [job] = await db.select().from(jobs).where(eq(jobs.kind, "email.login"));
-  const code = String(job?.payload.code ?? "");
+  const code = (job?.payload as { code?: string } | undefined)?.code ?? "";
   expect(code).toMatch(/^\d{6}$/);
   return code;
 }

@@ -33,6 +33,7 @@ export type JobPayloads = {
       }
     | { email: string; handle: string; url: string; askedAt: string; confidential: true };
   "telegram.question": { questionId: string };
+  "push.question": { questionId: string };
   "email.report": {
     email: string;
     handle: string;

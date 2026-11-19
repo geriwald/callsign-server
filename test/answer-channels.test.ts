@@ -177,6 +177,7 @@ describe("answer channels", () => {
     expect(me.owner.answer).toEqual({
       email: true,
       telegram: false,
+      push: false,
       address: owner.email,
       customAddress: false,
     });

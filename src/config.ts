@@ -47,6 +47,15 @@ const schema = z.object({
     .optional()
     .transform((token) => token || undefined),
   TELEGRAM_API_URL: z.url().default("https://api.telegram.org"),
+  VAPID_PUBLIC_KEY: z
+    .string()
+    .optional()
+    .transform((key) => key || undefined),
+  VAPID_PRIVATE_KEY: z
+    .string()
+    .optional()
+    .transform((key) => key || undefined),
+  VAPID_SUBJECT: z.string().optional(),
   EMAIL_BRIDGE_DOMAIN: z
     .string()
     .optional()

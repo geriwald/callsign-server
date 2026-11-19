@@ -10,6 +10,14 @@ import {
   sendAnswerTest,
   setAnswerChannels,
 } from "../../domain/answer-channels.ts";
+import {
+  confirmPushTest,
+  listPushDevices,
+  pushPublicKey,
+  removePushDevice,
+  sendPushTest,
+  subscribePush,
+} from "../../domain/push.ts";
 import { deleteAccount, deleteAgent, exportAccount } from "../../domain/account.ts";
 import {
   agentRules,
@@ -230,13 +238,19 @@ export const ownerRoutes = new Hono<AppEnv>()
         confidentialDefault: z.boolean().optional(),
         answerEmail: z.boolean().optional(),
         answerTelegram: z.boolean().optional(),
+        answerPush: z.boolean().optional(),
       }),
     );
     let owner = await updateOwner(c.get("owner"), fields);
-    if (fields.answerEmail !== undefined || fields.answerTelegram !== undefined) {
+    if (
+      fields.answerEmail !== undefined ||
+      fields.answerTelegram !== undefined ||
+      fields.answerPush !== undefined
+    ) {
       owner = await setAnswerChannels(owner, {
         email: fields.answerEmail,
         telegram: fields.answerTelegram,
+        push: fields.answerPush,
       });
     }
     return c.json({
@@ -261,6 +275,27 @@ export const ownerRoutes = new Hono<AppEnv>()
     const { channel } = await parseBody(c, z.object({ channel: z.enum(["email", "telegram"]) }));
     await sendAnswerTest(c.get("owner"), channel);
     return c.json({ sent: true });
+  })
+  .get("/v1/me/push", async (c) =>
+    c.json({ publicKey: pushPublicKey(), devices: await listPushDevices(c.get("owner")) }),
+  )
+  .post("/v1/me/push", async (c) => {
+    const device = await subscribePush(c.get("owner"), await c.req.json().catch(() => null));
+    return c.json({ device }, 201);
+  })
+  .delete("/v1/me/push/:id", async (c) => {
+    await removePushDevice(c.get("owner"), parseWith(z.uuid(), c.req.param("id")));
+    return c.body(null, 204);
+  })
+  .post("/v1/me/push/:id/test", async (c) => {
+    const { kind } = await parseBody(c, z.object({ kind: z.enum(["notification", "question"]) }));
+    await sendPushTest(c.get("owner"), parseWith(z.uuid(), c.req.param("id")), kind);
+    return c.json({ sent: true });
+  })
+  .post("/v1/me/push/confirm", async (c) => {
+    const { token } = await parseBody(c, z.object({ token: z.string().min(1).max(200) }));
+    await confirmPushTest(c.get("owner"), token);
+    return c.json({ confirmed: true });
   })
   .post("/v1/me/telegram", async (c) => c.json(await createTelegramLink(c.get("owner")), 201))
   .delete("/v1/me/telegram", async (c) => {
