@@ -14,9 +14,9 @@ import { randomToken, sha256 } from "../lib/crypto.ts";
 import type { DataKey } from "../lib/encryption.ts";
 import { uuidv7 } from "../lib/ids.ts";
 import { rateLimit } from "../lib/rate-limit.ts";
-import { telegramEnabled } from "../lib/telegram.ts";
 import { findConversation, isConfidential } from "./confidential.ts";
 import { bumpInbox } from "./conversations.ts";
+import { answerTargets } from "./answer-channels.ts";
 import { AppError } from "./errors.ts";
 import { formatHandle } from "./handles.ts";
 import { ownerKey } from "./keys.ts";
@@ -99,6 +99,7 @@ export async function askOwner(
   const [owner] = await db.select().from(owners).where(eq(owners.id, agent.ownerId));
   if (!owner) throw new AppError("not_found", "Account not found.");
   const confidential = await questionIsConfidential(conversation?.id ?? null, owner);
+  const targets = answerTargets(owner);
 
   const { row, recorded } = await db.transaction(async (tx) => {
     const [row] = await tx
@@ -119,27 +120,29 @@ export async function askOwner(
       .returning();
     if (!row) throw new Error("question insert returned no row");
     const url = new URL(`/dashboard?question=${id}`, config.APP_URL).toString();
-    await enqueue(
-      tx,
-      "email.question",
-      confidential
-        ? {
-            email: owner.email,
-            handle: formatHandle(agent.handle),
-            url,
-            askedAt: row.createdAt.toISOString(),
-            confidential: true,
-          }
-        : {
-            email: owner.email,
-            handle: formatHandle(agent.handle),
-            question,
-            url,
-            answerUrl: answerUrl.toString(),
-            options,
-          },
-    );
-    if (owner.telegramChatId && telegramEnabled()) {
+    if (targets.email) {
+      await enqueue(
+        tx,
+        "email.question",
+        confidential
+          ? {
+              email: targets.email,
+              handle: formatHandle(agent.handle),
+              url,
+              askedAt: row.createdAt.toISOString(),
+              confidential: true,
+            }
+          : {
+              email: targets.email,
+              handle: formatHandle(agent.handle),
+              question,
+              url,
+              answerUrl: answerUrl.toString(),
+              options,
+            },
+      );
+    }
+    if (targets.telegramChatId) {
       await enqueue(tx, "telegram.question", { questionId: id });
     }
     const recorded = await appendLedgerEvent(tx, agent, {

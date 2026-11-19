@@ -7,6 +7,7 @@ import { logger } from "../lib/logger.ts";
 import { rateLimit } from "../lib/rate-limit.ts";
 import { redis } from "../lib/redis.ts";
 import { botUsername, telegram, telegramEnabled, telegramWebhookSecret } from "../lib/telegram.ts";
+import { answerTargets } from "./answer-channels.ts";
 import { acknowledgeAlert, alertForTelegram, freezeFromAlert } from "./alerts.ts";
 import { AppError } from "./errors.ts";
 import { formatHandle } from "./handles.ts";
@@ -60,12 +61,17 @@ export async function createTelegramLink(
 
 export async function unlinkTelegram(owner: Owner): Promise<void> {
   const chatId = owner.telegramChatId;
-  await db.update(owners).set({ telegramChatId: null }).where(eq(owners.id, owner.id));
+  // Without Telegram, email is the only way left for questions to reach the owner.
+  await db
+    .update(owners)
+    .set({ telegramChatId: null, answerEmail: true })
+    .where(eq(owners.id, owner.id));
   if (chatId) {
+    // Best effort: a bot that can no longer write to the chat must not block the unlink.
     await say(
       chatId,
       "Disconnected from Callsign. Questions from your agents won't arrive here anymore.",
-    );
+    ).catch((err: unknown) => logger.warn({ err }, "telegram goodbye not delivered"));
   }
 }
 
@@ -159,7 +165,7 @@ export async function sendAlertToTelegram({ alertId }: { alertId: string }) {
 export async function sendHoldToTelegram({ holdId }: { holdId: string }) {
   if (!telegramEnabled()) return;
   const found = await holdForApprover(holdId);
-  const chatId = found?.owner.telegramChatId;
+  const chatId = found ? answerTargets(found.owner).telegramChatId : null;
   if (!found || !chatId) return;
   const { view, passkey, dashboard } = found;
   if (found.confidential) {
@@ -321,7 +327,10 @@ async function onStart(chatId: string, code: string) {
     return;
   }
   await db.transaction(async (tx) => {
-    await tx.update(owners).set({ telegramChatId: null }).where(eq(owners.telegramChatId, chatId));
+    await tx
+      .update(owners)
+      .set({ telegramChatId: null, answerEmail: true })
+      .where(eq(owners.telegramChatId, chatId));
     await tx.update(owners).set({ telegramChatId: chatId }).where(eq(owners.id, ownerId));
   });
   await say(

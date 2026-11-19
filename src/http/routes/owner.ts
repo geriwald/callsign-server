@@ -3,6 +3,13 @@ import { config } from "../../config.ts";
 import type { Agent } from "../../db/schema.ts";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import {
+  confirmAnswerAddress,
+  requestAnswerAddress,
+  resetAnswerAddress,
+  sendAnswerTest,
+  setAnswerChannels,
+} from "../../domain/answer-channels.ts";
 import { deleteAccount, deleteAgent, exportAccount } from "../../domain/account.ts";
 import {
   agentRules,
@@ -218,12 +225,42 @@ export const ownerRoutes = new Hono<AppEnv>()
   .patch("/v1/me", async (c) => {
     const fields = await parseBody(
       c,
-      z.object({ showDomain: z.boolean().optional(), confidentialDefault: z.boolean().optional() }),
+      z.object({
+        showDomain: z.boolean().optional(),
+        confidentialDefault: z.boolean().optional(),
+        answerEmail: z.boolean().optional(),
+        answerTelegram: z.boolean().optional(),
+      }),
     );
-    const owner = await updateOwner(c.get("owner"), fields);
+    let owner = await updateOwner(c.get("owner"), fields);
+    if (fields.answerEmail !== undefined || fields.answerTelegram !== undefined) {
+      owner = await setAnswerChannels(owner, {
+        email: fields.answerEmail,
+        telegram: fields.answerTelegram,
+      });
+    }
     return c.json({
       owner: { ...ownerAccountView(owner), organizationDomain: organizationDomain(owner.email) },
     });
+  })
+  .post("/v1/me/answer-address", async (c) => {
+    const { email } = await parseBody(c, z.object({ email: z.string().max(254) }));
+    await requestAnswerAddress(c.get("owner"), email);
+    return c.body(null, 202);
+  })
+  .post("/v1/me/answer-address/confirm", async (c) => {
+    const { code } = await parseBody(c, z.object({ code: z.string().max(12) }));
+    const owner = await confirmAnswerAddress(c.get("owner"), code);
+    return c.json({ owner: ownerAccountView(owner) });
+  })
+  .delete("/v1/me/answer-address", async (c) => {
+    const owner = await resetAnswerAddress(c.get("owner"));
+    return c.json({ owner: ownerAccountView(owner) });
+  })
+  .post("/v1/me/answer-test", async (c) => {
+    const { channel } = await parseBody(c, z.object({ channel: z.enum(["email", "telegram"]) }));
+    await sendAnswerTest(c.get("owner"), channel);
+    return c.json({ sent: true });
   })
   .post("/v1/me/telegram", async (c) => c.json(await createTelegramLink(c.get("owner")), 201))
   .delete("/v1/me/telegram", async (c) => {

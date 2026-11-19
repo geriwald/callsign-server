@@ -8,6 +8,7 @@ import { randomToken, sha256 } from "../lib/crypto.ts";
 import { uuidv7 } from "../lib/ids.ts";
 import { rateLimit } from "../lib/rate-limit.ts";
 import { telegramEnabled } from "../lib/telegram.ts";
+import { answerView } from "./answer-channels.ts";
 import { AppError } from "./errors.ts";
 import { newOwnerKey } from "./keys.ts";
 import { canSignIn } from "./signup.ts";
@@ -124,6 +125,7 @@ export function ownerAccountView(owner: Owner) {
     showDomain: owner.showDomain,
     confidentialDefault: owner.confidentialDefault,
     telegram: telegramEnabled() ? { linked: owner.telegramChatId !== null } : null,
+    answer: answerView(owner),
   };
 }
 

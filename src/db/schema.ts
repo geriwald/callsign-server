@@ -39,6 +39,11 @@ export const owners = pgTable("owners", {
   telegramChatId: text("telegram_chat_id").unique(),
   // What a new conversation starts with: notifications about confidential ones carry no content.
   confidentialDefault: boolean("confidential_default").notNull().default(false),
+  // Where questions and approvals reach the owner; security alerts ignore these.
+  answerEmail: boolean("answer_email").notNull().default(true),
+  answerTelegram: boolean("answer_telegram").notNull().default(true),
+  // A confirmed address for questions and approvals; null means the sign-in address.
+  answerEmailAddress: text("answer_email_address"),
   createdAt: createdAt(),
 });
 

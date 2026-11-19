@@ -37,6 +37,7 @@ import { assertReachable, findAgentByHandle } from "./agents.ts";
 import { raiseAlert } from "./alerts.ts";
 import { confidentialByDefault, findConversation, isConfidential } from "./confidential.ts";
 import { bumpInbox } from "./conversations.ts";
+import { answerTargets } from "./answer-channels.ts";
 import { AppError } from "./errors.ts";
 import { reserveFiles, unreserveFiles } from "./files.ts";
 import {
@@ -912,10 +913,12 @@ export async function emailHold({
   const found = await holdForApprover(holdId);
   if (!found) return;
   const { owner, view, passkey, dashboard } = found;
+  const to = answerTargets(owner).email;
+  if (!to) return;
   if (found.confidential) {
     // The approval link opens the action without a sign-in, so it stays out of the email.
     await sendMail({
-      to: owner.email,
+      to,
       subject: `${view.agent} is waiting for your approval`,
       text: [
         `${view.agent} wants to do this, and your rules hold it until you decide: ${found.outline}.`,
@@ -930,7 +933,7 @@ export async function emailHold({
     return;
   }
   await sendMail({
-    to: owner.email,
+    to,
     subject: `${view.agent} is waiting for your approval`,
     text: [
       `${view.agent} wants to do this, and your rules hold it until you decide:`,
