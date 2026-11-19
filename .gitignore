@@ -7,3 +7,7 @@ coverage
 .DS_Store
 docker-compose.override.yml
 cli/dist
+
+# Local Claude Code state
+.claude/
+.mcp.json
