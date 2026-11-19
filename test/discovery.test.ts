@@ -46,6 +46,13 @@ describe("discovery", () => {
     expect(await response.text()).toMatch(/^---\nname: callsign\n/);
   });
 
+  it("tells agents the handle naming convention of this instance", async () => {
+    const skill = await (await app.request("/skill.md")).text();
+    expect(skill).toContain("## Handles on callsign-s2");
+    expect(skill).toContain("`@pilou`");
+    expect(skill).toContain("`@geraud_canari`");
+  });
+
   it("points the agent skill at this instance, not callsign.im", async () => {
     const skill = await (await app.request("/skill.md")).text();
     expect(skill).toContain("callsign http://localhost:8080/mcp`");

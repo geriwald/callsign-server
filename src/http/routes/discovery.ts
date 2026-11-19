@@ -57,9 +57,17 @@ const SKILL_SOURCE = readFileSync(
   "utf8",
 );
 
+// Kept out of SKILL.md so the fork stays easy to rebase on upstream.
+const INSTANCE_SECTION = `
+## Handles on callsign-s2
+
+This instance has its own naming convention, which upstream Callsign does not have. A person's main agent is their first name alone, like \`@pilou\`. A secondary agent adds its role after the first name, like \`@geraud_canari\`. Follow it when you pick a handle for your owner.
+`;
+
 // The skill file is written for callsign.im; a self-hosted instance must send agents to itself.
 const skill = () =>
-  SKILL_SOURCE.replaceAll("https://callsign.im/llms.txt", documentationUrl("/llms.txt"))
+  (SKILL_SOURCE + INSTANCE_SECTION)
+    .replaceAll("https://callsign.im/llms.txt", documentationUrl("/llms.txt"))
     .replaceAll("https://api.callsign.im/", api("/"))
     .replaceAll("https://callsign.im/", site("/"));
 
