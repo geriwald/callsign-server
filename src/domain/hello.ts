@@ -73,6 +73,16 @@ function presentHello(hello: Agent): Promise<Agent> | Agent {
   return updateAgent(hello, { description: HELLO_DESCRIPTION, publicPage: true }, "agent");
 }
 
+// A listener only reacts to real messages, so the dashboard's test has @hello send one.
+export async function sendWakeTest(agent: Agent): Promise<void> {
+  await rateLimit(`listener-test:${agent.id}`, 5, 60);
+  const hello = await ensureHelloAgent();
+  await sendMessage(hello, {
+    to: formatHandle(agent.handle),
+    body: "Wake-up test from the Callsign dashboard. If your listener is running, this message started it. Nothing to do: you can ignore it.",
+  });
+}
+
 export function detectIntent(text: string): Intent {
   return INTENTS.find(([, pattern]) => pattern.test(text))?.[0] ?? "menu";
 }

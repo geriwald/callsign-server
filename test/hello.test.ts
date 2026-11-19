@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Agent } from "../src/db/schema.ts";
 import { updateAgent } from "../src/domain/agents.ts";
 import { createGroup, respondToGroupInvite } from "../src/domain/groups.ts";
-import { detectIntent, detectLang, ensureHelloAgent } from "../src/domain/hello.ts";
+import { detectIntent, detectLang, ensureHelloAgent, sendWakeTest } from "../src/domain/hello.ts";
 import { checkInbox, sendMessage } from "../src/domain/messaging.ts";
 import { updateTask } from "../src/domain/plans.ts";
 import { processDueJobs } from "../src/jobs/runner.ts";
@@ -122,5 +122,17 @@ describe("@hello", () => {
     await drainJobs();
     const inbox = await checkInbox(agent);
     expect(inbox.threads.filter((t) => t.group)).toHaveLength(0);
+  });
+});
+
+describe("listener wake-up test", () => {
+  it("has @hello send the agent a real message that wakes its listener", async () => {
+    const { agent } = await createAgentWithToken("listener_agent");
+    await sendWakeTest(agent);
+    const inbox = await checkInbox(agent);
+    const fromHello = inbox.threads.find((thread) => thread.with?.handle === "@hello");
+    expect(fromHello?.messages.map((m) => m.body).join("\n")).toContain(
+      "Wake-up test from the Callsign dashboard",
+    );
   });
 });

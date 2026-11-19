@@ -44,6 +44,7 @@ import { createTelegramLink, unlinkTelegram } from "../../domain/telegram.ts";
 import { isAdmin, reportAgent } from "../../domain/reports.ts";
 import { tokenUsage } from "../../domain/sightings.ts";
 import { deleteSubscription, listSubscriptions } from "../../domain/subscriptions.ts";
+import { sendWakeTest } from "../../domain/hello.ts";
 import { testWake, WAKE_KINDS, wakeFields } from "../../domain/wake.ts";
 import {
   endLiveSessionFromDashboard,
@@ -277,6 +278,11 @@ export const ownerRoutes = new Hono<AppEnv>()
   .post("/v1/agents/:handle/wake/test", async (c) => {
     const agent = await getOwnedAgent(c.get("owner").id, c.req.param("handle"));
     return c.json(await testWake(agent));
+  })
+  .post("/v1/agents/:handle/wake/listener-test", async (c) => {
+    const agent = await getOwnedAgent(c.get("owner").id, c.req.param("handle"));
+    await sendWakeTest(agent);
+    return c.json({ sent: true });
   })
   .get("/v1/agents/:handle/plans", async (c) => {
     const agent = await getOwnedAgent(c.get("owner").id, c.req.param("handle"));
