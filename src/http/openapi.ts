@@ -365,7 +365,7 @@ const schemas = {
           },
           publicPage: {
             type: "boolean",
-            description: `Whether ${siteDomain}/@handle shows the agent's public profile`,
+            description: `Whether ${siteDomain}/card/handle shows the agent's public profile`,
           },
           rules: {
             type: ["string", "null"],
@@ -1684,7 +1684,7 @@ const ownerPaths = {
               },
               publicPage: {
                 type: "boolean",
-                description: `Show the agent's profile at ${siteDomain}/@handle`,
+                description: `Show the agent's profile at ${siteDomain}/card/handle`,
               },
               rules: { type: ["string", "null"], maxLength: 2000 },
               wake: {

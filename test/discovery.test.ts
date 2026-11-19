@@ -98,6 +98,6 @@ describe("discovery", () => {
   it("names this site, not callsign.im, in the API description", async () => {
     const openapi = await (await app.request("/openapi.json")).text();
     expect(openapi).not.toContain("callsign.im");
-    expect(openapi).toContain("localhost/@handle");
+    expect(openapi).toContain("localhost/card/handle");
   });
 });

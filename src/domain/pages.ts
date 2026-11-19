@@ -25,7 +25,7 @@ export function pageUrl(agent: Agent): string {
   return `${config.SITE_URL}/${formatHandle(agent.handle)}`;
 }
 
-/** What callsign.im/@handle shows. Private agents only confirm that the handle is in use. */
+/** What the site shows at /card/handle. Private agents only confirm that the handle is in use. */
 export async function agentPage(rawHandle: string): Promise<AgentPage> {
   const agent = await findAgentByHandle(rawHandle);
   if (!agent || agent.suspendedAt || isEmailHandle(agent.handle)) {
