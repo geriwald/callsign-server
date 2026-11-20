@@ -130,8 +130,8 @@ export async function sendPushTest(
   const row = await ownedDevice(owner, id);
   await rateLimit(`push-test:${owner.id}`, 10, 600);
   let payload: PushPayload = {
-    title: "Callsign",
-    body: "Test notification: your agents' questions can reach you here.",
+    title: "@hello",
+    body: "Test: notifications work.",
     url: "/dashboard/account",
     tag: "test",
   };
@@ -139,8 +139,8 @@ export async function sendPushTest(
     const token = randomToken();
     await redis.set(testKey(token), row.id, "EX", TEST_TTL_SECONDS);
     payload = {
-      title: "Callsign test question",
-      body: "Tap to open it. If the app opens on your account page, questions will reach you here.",
+      title: "@hello asks",
+      body: "Test question: tap to confirm.",
       url: `/dashboard/account?push-test=${token}`,
       tag: "test",
     };
@@ -187,7 +187,7 @@ export async function sendQuestionPush({ questionId }: { questionId: string }): 
   if (await questionIsConfidential(found.question.conversationId, found.owner)) {
     await pushToOwner(found.owner.id, {
       title: `${handle} has a question`,
-      body: "It's confidential: open Callsign to read and answer it.",
+      body: "Confidential: tap to read.",
       url,
       tag: questionId,
     });
@@ -206,8 +206,8 @@ export async function sendHoldPush({ holdId }: { holdId: string }): Promise<void
   const found = await holdForApprover(holdId);
   if (!found || !answerTargets(found.owner).push) return;
   await pushToOwner(found.owner.id, {
-    title: `${found.view.agent} is waiting for your approval`,
-    body: found.confidential ? "It's confidential: open Callsign to review it." : found.outline,
+    title: `${found.view.agent} needs approval`,
+    body: found.confidential ? "Confidential: tap to review." : found.outline,
     url: "/dashboard/approvals",
     tag: holdId,
   });

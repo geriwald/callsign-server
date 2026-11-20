@@ -161,3 +161,16 @@ describe("web app push", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("push texts", () => {
+  it("keeps test notifications short and signed by @hello", async () => {
+    const { owner } = await createAgentWithToken("short_texts");
+    const added = await subscribePush(owner, device("phone"));
+    await sendPushTest(owner, added.id, "notification");
+    await sendPushTest(owner, added.id, "question");
+    expect(sent().map(({ payload }) => [payload.title, payload.body])).toEqual([
+      ["@hello", "Test: notifications work."],
+      ["@hello asks", "Test question: tap to confirm."],
+    ]);
+  });
+});
