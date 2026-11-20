@@ -1,20 +1,13 @@
 import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { config } from "../config.ts";
 import { db } from "../db/client.ts";
-import {
-  agents,
-  ownerQuestions,
-  owners,
-  type Agent,
-  type Owner,
-  type OwnerQuestion,
-} from "../db/schema.ts";
+import { agents, ownerQuestions, owners, type Agent, type OwnerQuestion } from "../db/schema.ts";
 import { enqueue } from "../jobs/queue.ts";
-import { randomToken, sha256 } from "../lib/crypto.ts";
+import { sha256 } from "../lib/crypto.ts";
 import type { DataKey } from "../lib/encryption.ts";
 import { uuidv7 } from "../lib/ids.ts";
 import { rateLimit } from "../lib/rate-limit.ts";
-import { findConversation, isConfidential } from "./confidential.ts";
+import { findConversation } from "./confidential.ts";
 import { bumpInbox } from "./conversations.ts";
 import { answerTargets } from "./answer-channels.ts";
 import { AppError } from "./errors.ts";
@@ -92,13 +85,9 @@ export async function askOwner(
   }
   await rateLimit(`ask-owner:${agent.id}`, 20, 3600);
   const id = uuidv7();
-  const token = randomToken("csq");
-  const answerUrl = new URL("/answer", config.APP_URL);
-  answerUrl.searchParams.set("token", token);
   const key = await ownerKey(agent.ownerId);
   const [owner] = await db.select().from(owners).where(eq(owners.id, agent.ownerId));
   if (!owner) throw new AppError("not_found", "Account not found.");
-  const confidential = await questionIsConfidential(conversation?.id ?? null, owner);
   const targets = answerTargets(owner);
 
   const { row, recorded } = await db.transaction(async (tx) => {
@@ -114,33 +103,18 @@ export async function askOwner(
           options.length ? JSON.stringify(options) : null,
           fieldContext(id, "options"),
         ),
-        // Answer links open the question without a sign-in, so confidential ones get none.
-        answerTokenHash: confidential ? null : sha256(token),
+        // Questions are answered in the signed-in app only, so no answer link exists.
+        answerTokenHash: null,
       })
       .returning();
     if (!row) throw new Error("question insert returned no row");
-    const url = new URL(`/dashboard?question=${id}`, config.APP_URL).toString();
     if (targets.email) {
-      await enqueue(
-        tx,
-        "email.question",
-        confidential
-          ? {
-              email: targets.email,
-              handle: formatHandle(agent.handle),
-              url,
-              askedAt: row.createdAt.toISOString(),
-              confidential: true,
-            }
-          : {
-              email: targets.email,
-              handle: formatHandle(agent.handle),
-              question,
-              url,
-              answerUrl: answerUrl.toString(),
-              options,
-            },
-      );
+      await enqueue(tx, "email.question", {
+        email: targets.email,
+        handle: formatHandle(agent.handle),
+        url: questionUrl(id),
+        askedAt: row.createdAt.toISOString(),
+      });
     }
     if (targets.telegramChatId) {
       await enqueue(tx, "telegram.question", { questionId: id });
@@ -157,12 +131,9 @@ export async function askOwner(
   return openQuestion(key, row);
 }
 
-/** A question about a conversation follows it; any other follows its owner's default. */
-export async function questionIsConfidential(
-  conversationId: string | null,
-  owner: Owner,
-): Promise<boolean> {
-  return conversationId ? isConfidential(conversationId) : owner.confidentialDefault;
+/** Where the owner reads and answers a question: notifications link here, never carry it. */
+export function questionUrl(questionId: string): string {
+  return new URL(`/dashboard/questions?question=${questionId}`, config.APP_URL).toString();
 }
 
 export async function questionStatus(agent: Agent, id: string) {

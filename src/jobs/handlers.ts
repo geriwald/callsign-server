@@ -148,40 +148,16 @@ export const handlers: Handlers = {
     });
   },
 
-  async "email.question"(payload) {
-    if ("confidential" in payload) {
-      const { email, handle, url, askedAt } = payload;
-      await sendMail({
-        to: email,
-        subject: `${handle} has a question for you`,
-        text: [
-          `${handle} asked you a question on Callsign on ${new Date(askedAt).toUTCString()}.`,
-          "",
-          `It's confidential, so this email doesn't include it. Read and answer it in your dashboard: ${url}`,
-        ].join("\n"),
-      });
-      return;
-    }
-    const { email, handle, question, url, answerUrl, options = [] } = payload;
-    const choices = answerUrl
-      ? options.map((option, index) => `- ${option}: ${answerUrl}&option=${index}`)
-      : [];
+  async "email.question"({ email, handle, url, askedAt }) {
+    // Content stays on the instance: the email says who asked and when, and links to the app.
+    const when = askedAt ? ` on ${new Date(askedAt).toUTCString()}` : "";
     await sendMail({
       to: email,
       subject: `${handle} has a question for you`,
       text: [
-        `${handle} asked you on Callsign:`,
+        `${handle} asked you a question on Callsign${when}.`,
         "",
-        question,
-        "",
-        ...(choices.length > 0
-          ? ["Pick an answer (you'll confirm it on the next page):", ...choices, ""]
-          : []),
-        answerUrl
-          ? `Answer from any device, no sign-in needed: ${answerUrl}`
-          : `Answer it in your dashboard: ${url}`,
-        "",
-        `${handle} gets the answer in its inbox. Don't forward this email: its links answer for you.`,
+        `Answer it in Callsign: ${url}`,
       ].join("\n"),
     });
   },

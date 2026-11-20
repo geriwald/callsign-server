@@ -92,25 +92,24 @@ describe("web app push", () => {
     expect(on.answerPush).toBe(true);
   });
 
-  it("sends questions to tested devices, without text when confidential", async () => {
+  it("sends questions to tested devices with who asked, never the question", async () => {
     const { owner, agent } = await createAgentWithToken("notified");
     await testedDevice(owner);
     await setAnswerChannels(await reload(owner), { push: true, email: false });
     vi.mocked(sendPush).mockClear();
 
-    await askOwner(agent, { question: "Ship the release tonight?" });
+    const asked = await askOwner(agent, { question: "Ship the release tonight?" });
     await drainJobs();
     expect(sent()).toMatchObject([
-      { payload: { title: "@notified asks", body: "Ship the release tonight?" } },
+      {
+        payload: {
+          title: "@notified has a question",
+          body: "Tap to answer.",
+          url: `/dashboard/questions?question=${asked.id}`,
+        },
+      },
     ]);
-
-    vi.mocked(sendPush).mockClear();
-    await db.update(owners).set({ confidentialDefault: true }).where(eq(owners.id, owner.id));
-    await askOwner(agent, { question: "Secret plan?" });
-    await drainJobs();
-    const payload = sent()[0]?.payload as PushPayload;
-    expect(payload.body).not.toContain("Secret");
-    expect(payload.url).toMatch(/^\/dashboard\?question=/);
+    expect(JSON.stringify(sent())).not.toContain("Ship the release");
   });
 
   it("forgets a gone device and falls back to email when none is left", async () => {

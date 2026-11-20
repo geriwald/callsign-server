@@ -13,12 +13,10 @@ import { AppError } from "./errors.ts";
 import { formatHandle } from "./handles.ts";
 import { decideHoldFromTelegram, holdForApprover } from "./holds.ts";
 import { decideInvitation, pendingInvitation } from "./invitations.ts";
-import { ownerKey } from "./keys.ts";
-import { answerQuestion, openQuestion, questionIsConfidential, type Reply } from "./questions.ts";
+import { answerQuestion, questionUrl, type Reply } from "./questions.ts";
 import { isAdmin } from "./reports.ts";
 
 const LINK_TTL_SECONDS = 600;
-const QUESTION_TTL_SECONDS = 7 * 86_400;
 
 const linkKey = (code: string) => `telegram-link:${code}`;
 const questionKey = (chatId: string, messageId: number) =>
@@ -94,45 +92,16 @@ export async function sendQuestionToTelegram({ questionId }: { questionId: strin
   const chatId = found?.owner.telegramChatId;
   if (!found || !chatId || found.question.answeredAt || !telegramEnabled()) return;
 
-  if (await questionIsConfidential(found.question.conversationId, found.owner)) {
-    const url = new URL(`/dashboard?question=${questionId}`, config.APP_URL).toString();
-    await say(
-      chatId,
-      [
-        `${formatHandle(found.agent.handle)} asked you a question on ${found.question.createdAt.toUTCString()}.`,
-        "",
-        "It's confidential, so it isn't shown here. Read and answer it in your Callsign dashboard.",
-      ].join("\n"),
-      { reply_markup: { inline_keyboard: [[{ text: "Open in the dashboard", url }]] } },
-    );
-    return;
-  }
-
-  const { question, context, options } = openQuestion(
-    await ownerKey(found.owner.id),
-    found.question,
+  // Content stays on the instance: the message says who asked and when, and links to the app.
+  await say(
+    chatId,
+    `${formatHandle(found.agent.handle)} asked you a question on ${found.question.createdAt.toUTCString()}.`,
+    {
+      reply_markup: {
+        inline_keyboard: [[{ text: "Open in Callsign", url: questionUrl(questionId) }]],
+      },
+    },
   );
-  const text = [
-    `${formatHandle(found.agent.handle)} asks:`,
-    "",
-    question,
-    ...(context ? ["", context] : []),
-    "",
-    options.length > 0
-      ? "Tap an option, or reply to this message with something else."
-      : "Reply to this message with your answer.",
-  ].join("\n");
-  const sent = await say(chatId, text, {
-    reply_markup:
-      options.length > 0
-        ? {
-            inline_keyboard: options.map((option, index) => [
-              { text: option, callback_data: `answer:${questionId}:${index}` },
-            ]),
-          }
-        : { force_reply: true, input_field_placeholder: "Your answer" },
-  });
-  await redis.set(questionKey(chatId, sent.message_id), questionId, "EX", QUESTION_TTL_SECONDS);
 }
 
 export async function sendAlertToTelegram({ alertId }: { alertId: string }) {
@@ -167,50 +136,19 @@ export async function sendHoldToTelegram({ holdId }: { holdId: string }) {
   const found = await holdForApprover(holdId);
   const chatId = found ? answerTargets(found.owner).telegramChatId : null;
   if (!found || !chatId) return;
-  const { view, passkey, dashboard } = found;
-  if (found.confidential) {
-    await say(
-      chatId,
-      [
-        `${view.agent} has been waiting for your approval since ${new Date(view.createdAt).toUTCString()}: ${found.outline}.`,
-        "",
-        `Your rules hold it because ${view.why.join(" and ")}.`,
-        "",
-        "It's confidential, so the details aren't shown here. Approve it in your Callsign dashboard, or decline it now.",
-      ].join("\n"),
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "Decline", callback_data: `hd:${holdId}` }],
-            [{ text: "Open in the dashboard", url: dashboard }],
-          ],
-        },
+  const { view, dashboard } = found;
+  await say(
+    chatId,
+    `${view.agent} is waiting for your approval since ${new Date(view.createdAt).toUTCString()}: ${found.outline}.`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Open in Callsign", url: dashboard }],
+          [{ text: "Decline", callback_data: `hd:${holdId}` }],
+        ],
       },
-    );
-    return;
-  }
-  const text = [
-    `${view.agent} wants to do this:`,
-    "",
-    view.summary,
-    "",
-    `Your rules hold it because ${view.why.join(" and ")}.`,
-  ].join("\n");
-  await say(chatId, text, {
-    reply_markup: {
-      inline_keyboard: passkey
-        ? [
-            [{ text: "Decline", callback_data: `hd:${holdId}` }],
-            [{ text: "Approve in the dashboard", url: dashboard }],
-          ]
-        : [
-            [
-              { text: "Approve", callback_data: `ha:${holdId}` },
-              { text: "Decline", callback_data: `hd:${holdId}` },
-            ],
-          ],
     },
-  });
+  );
 }
 
 export async function sendInvitationToTelegram({ invitationId }: { invitationId: string }) {

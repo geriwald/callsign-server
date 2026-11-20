@@ -5,7 +5,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { config } from "../src/config.ts";
 import { db } from "../src/db/client.ts";
 import { jobs, owners, type Owner } from "../src/db/schema.ts";
-import { listLedger } from "../src/domain/ledger.ts";
 import { checkInbox } from "../src/domain/messaging.ts";
 import { createSession } from "../src/domain/owners.ts";
 import { askOwner } from "../src/domain/questions.ts";
@@ -73,47 +72,26 @@ function webhook(
 }
 
 describe("answering from a phone", () => {
-  it("emails one-tap options that open a confirmation page", async () => {
+  it("answers in the signed-in app, with no answer link in the email", async () => {
     const { owner, agent } = await createAgentWithToken("alice_agent");
     const asked = await askOwner(agent, {
       question: "Share the Q3 budget with @bob_agent?",
       options: ["Yes", "Only the ads line", "No"],
     });
     expect(asked.options).toEqual(["Yes", "Only the ads line", "No"]);
-
     const [email] = await db.select().from(jobs).where(eq(jobs.kind, "email.question"));
-    const payload = email?.payload as { answerUrl: string; options: string[] };
-    expect(payload.options).toEqual(asked.options);
-    const token = new URL(payload.answerUrl).searchParams.get("token") ?? "";
+    expect(JSON.stringify(email?.payload)).not.toContain("answer?token");
 
     const app = createApp();
-    const view = await app.request(`/v1/answers/${token}`);
-    expect(await view.json()).toMatchObject({
-      agent: "@alice_agent",
-      question: asked.question,
-      options: asked.options,
-    });
-
-    const answered = await app.request(`/v1/answers/${token}`, {
+    const response = await app.request(`/v1/questions/${asked.id}`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: await headers(owner),
       body: JSON.stringify({ option: 1 }),
     });
-    expect(await answered.json()).toEqual({ agent: "@alice_agent", answer: "Only the ads line" });
+    expect(((await response.json()) as { answer: string }).answer).toBe("Only the ads line");
     expect((await checkInbox(agent)).ownerAnswers).toMatchObject([
       { questionId: asked.id, answer: "Only the ads line" },
     ]);
-    expect((await app.request(`/v1/answers/${token}`)).status).toBe(404);
-    const [latest] = await listLedger(agent, { limit: 1 });
-    expect(latest).toMatchObject({ type: "owner.answered", data: { via: "email" } });
-
-    const second = await askOwner(agent, { question: "Pay the invoice?", options: ["Yes", "No"] });
-    const response = await app.request(`/v1/questions/${second.id}`, {
-      method: "POST",
-      headers: await headers(owner),
-      body: JSON.stringify({ option: 0 }),
-    });
-    expect(((await response.json()) as { answer: string }).answer).toBe("Yes");
   });
 
   it("rejects options that don't make a choice", async () => {
@@ -150,44 +128,26 @@ describe("answering from a phone", () => {
     expect(linked?.telegramChatId).toBe("555");
     expect(calls.at(-1)?.body.text).toContain("Connected");
 
-    const tap = await askOwner(agent, { question: "Accept @carol_agent?", options: ["Yes", "No"] });
+    const asked = await askOwner(agent, {
+      question: "Accept @carol_agent?",
+      options: ["Yes", "No"],
+    });
     await drainJobs();
     const sent = calls.findLast((call) => call.method === "sendMessage");
+    expect(String(sent?.body.text)).not.toContain("carol");
     expect(sent?.body).toMatchObject({
       chat_id: "555",
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Yes", callback_data: `answer:${tap.id}:0` }],
-          [{ text: "No", callback_data: `answer:${tap.id}:1` }],
+          [
+            {
+              text: "Open in Callsign",
+              url: `http://localhost:3001/dashboard/questions?question=${asked.id}`,
+            },
+          ],
         ],
       },
     });
-    await webhook(app, {
-      callback_query: {
-        id: "cb1",
-        data: `answer:${tap.id}:1`,
-        message: { message_id: sent?.messageId, chat, text: "@alice_agent asks: …" },
-      },
-    });
-    expect(calls.some((call) => call.method === "editMessageText")).toBe(true);
-
-    const free = await askOwner(agent, { question: "What should I tell @bob_agent?" });
-    await drainJobs();
-    const prompt = calls.findLast((call) => call.method === "sendMessage");
-    expect(prompt?.body.reply_markup).toMatchObject({ force_reply: true });
-    await webhook(app, {
-      message: {
-        message_id: 7,
-        chat,
-        text: "Tell him Monday works",
-        reply_to_message: { message_id: prompt?.messageId },
-      },
-    });
-
-    expect((await checkInbox(agent)).ownerAnswers).toMatchObject([
-      { questionId: tap.id, answer: "No" },
-      { questionId: free.id, answer: "Tell him Monday works" },
-    ]);
 
     await webhook(app, { message: { message_id: 8, chat, text: "/stop" } });
     const [unlinked] = await db.select().from(owners).where(eq(owners.id, owner.id));

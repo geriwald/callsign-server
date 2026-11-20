@@ -35,7 +35,6 @@ import { sendMail } from "../lib/mailer.ts";
 import { networkOf, normalizeIp } from "../lib/network.ts";
 import { assertReachable, findAgentByHandle } from "./agents.ts";
 import { raiseAlert } from "./alerts.ts";
-import { confidentialByDefault, findConversation, isConfidential } from "./confidential.ts";
 import { bumpInbox } from "./conversations.ts";
 import { answerTargets } from "./answer-channels.ts";
 import { AppError } from "./errors.ts";
@@ -172,38 +171,6 @@ function outline(kind: HoldKind, input: StoredPayload["input"] | null): string {
     case "tool.call":
       return `Use ${(input as { tool: string }).tool}`;
   }
-}
-
-/**
- * Whether a held action belongs to a confidential conversation. One that would start a
- * conversation follows the defaults of the owners it would bring together, and anything else
- * the defaults of the agent's owner and its approver.
- */
-async function holdIsConfidential(
-  agent: Agent,
-  hold: HeldAction,
-  input: StoredPayload["input"] | null,
-): Promise<boolean> {
-  const ownerIds = [agent.ownerId, hold.approverOwnerId];
-  if (input && (hold.kind === "message" || hold.kind === "group.invite")) {
-    const to =
-      hold.kind === "message"
-        ? (input as { to: string }).to
-        : `#${normalizeGroupName((input as { group: string }).group)}`;
-    const conversation = await findConversation(agent, to);
-    if (conversation) return isConfidential(conversation.id);
-    const peer = isGroupRef(to) ? undefined : await findAgentByHandle(normalizeHandle(to));
-    return confidentialByDefault(peer ? [...ownerIds, peer.ownerId] : ownerIds);
-  }
-  if (input && hold.kind === "group.create") {
-    const members = await Promise.all(
-      (input as { members: string[] }).members.map((handle) =>
-        findAgentByHandle(normalizeHandle(handle)),
-      ),
-    );
-    return confidentialByDefault([...ownerIds, ...members.flatMap((m) => (m ? [m.ownerId] : []))]);
-  }
-  return confidentialByDefault(ownerIds);
 }
 
 function storedInput(key: DataKey, hold: HeldAction): StoredPayload["input"] | null {
@@ -685,14 +652,7 @@ export async function decideHoldFromTelegram(
 ): Promise<HoldView> {
   const found = await ownedHold(owner.id, id);
   if (decision === "approve") {
-    // Telegram never shows what a confidential action is, so nobody approves it from there.
-    const input = storedInput(await ownerKey(found.agent.ownerId), found.hold);
-    if (await holdIsConfidential(found.agent, found.hold, input)) {
-      throw new AppError("forbidden", "It's confidential: approve it from the dashboard.", {
-        reason: "confidential",
-      });
-    }
-    await assertOneTapApproval(owner.id);
+    throw new AppError("forbidden", "Approve it in the Callsign app.", { reason: "in_app" });
   }
   return decide(found, decision, "telegram");
 }
@@ -898,57 +858,26 @@ export async function holdForApprover(holdId: string) {
     view: holdView(key, found.hold, found.agent.handle),
     passkey: await ownerHasPasskeys(found.owner.id),
     dashboard: new URL("/dashboard/approvals", config.APP_URL).toString(),
-    confidential: await holdIsConfidential(found.agent, found.hold, input),
     outline: outline(found.hold.kind, input),
   };
 }
 
-export async function emailHold({
-  holdId,
-  approveUrl,
-}: {
-  holdId: string;
-  approveUrl: string;
-}): Promise<void> {
+export async function emailHold({ holdId }: { holdId: string; approveUrl: string }): Promise<void> {
   const found = await holdForApprover(holdId);
   if (!found) return;
-  const { owner, view, passkey, dashboard } = found;
+  const { owner, view, dashboard } = found;
   const to = answerTargets(owner).email;
   if (!to) return;
-  if (found.confidential) {
-    // The approval link opens the action without a sign-in, so it stays out of the email.
-    await sendMail({
-      to,
-      subject: `${view.agent} is waiting for your approval`,
-      text: [
-        `${view.agent} wants to do this, and your rules hold it until you decide: ${found.outline}.`,
-        "",
-        `It's held because ${view.why.join(" and ")}.`,
-        "",
-        `It's confidential, so this email doesn't include the details. Review it in your dashboard: ${dashboard}`,
-        "",
-        `If nobody decides by ${new Date(view.expiresAt).toUTCString()}, it expires and doesn't happen.`,
-      ].join("\n"),
-    });
-    return;
-  }
+  // Content stays on the instance: the email says who and what kind, and links to the app.
   await sendMail({
     to,
     subject: `${view.agent} is waiting for your approval`,
     text: [
-      `${view.agent} wants to do this, and your rules hold it until you decide:`,
+      `${view.agent} wants to do this, and your rules hold it until you decide: ${found.outline}.`,
       "",
-      view.summary,
+      `Review it in Callsign: ${dashboard}`,
       "",
-      `It's held because ${view.why.join(" and ")}.`,
-      "",
-      passkey
-        ? `Approve it with your passkey in the dashboard, or decline it from this link: ${approveUrl}`
-        : `Approve or decline it: ${approveUrl}`,
-      "",
-      `Everything waiting for you: ${dashboard}`,
-      "",
-      `If nobody decides by ${new Date(view.expiresAt).toUTCString()}, it expires and doesn't happen. Don't forward this email: its link acts for you.`,
+      `If nobody decides by ${new Date(view.expiresAt).toUTCString()}, it expires and doesn't happen.`,
     ].join("\n"),
   });
 }

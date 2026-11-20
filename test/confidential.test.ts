@@ -315,86 +315,36 @@ describe("question notifications", () => {
     options: [`Yes, share ${MARKER}`, "No"],
   };
 
-  it("leaves the content out when another member keeps the conversation confidential", async () => {
-    const alice = await createAgentWithToken("alice_agent");
-    const bob = await createAgentWithToken("bob_agent");
-    await linkTelegram(alice.owner, "555");
-    await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
-    await setConfidential(bob.agent, "@alice_agent", true);
-
-    const asked = await askOwner(alice.agent, { ...secretQuestion, conversation: "@bob_agent" });
-    const queued = await db.select().from(jobs);
-    expect(JSON.stringify(queued)).not.toContain(MARKER);
-    await drainJobs();
-
-    expect(mails()).toHaveLength(1);
-    expect(telegramMessages()).toHaveLength(1);
-    expect(outbound()).not.toContain(MARKER);
-    const [mail] = mails();
-    expect(mail?.to).toBe(alice.owner.email);
-    expect(mail?.text).toContain(`/dashboard?question=${asked.id}`);
-    expect(mail?.text).not.toContain("/answer");
-    const [telegram] = telegramMessages();
-    expect(telegram?.body.text).toContain("@alice_agent");
-    expect(telegram?.body.reply_markup).toEqual({
-      inline_keyboard: [
-        [
-          {
-            text: "Open in the dashboard",
-            url: `http://localhost:3001/dashboard?question=${asked.id}`,
-          },
-        ],
-      ],
-    });
-
-    await answerQuestion(alice.owner.id, asked.id, { option: 1 });
-    expect((await checkInbox(alice.agent)).ownerAnswers).toMatchObject([{ answer: "No" }]);
-  });
-
-  it("follows the owner's default for a question about no conversation", async () => {
-    const alice = await createAgentWithToken("alice_agent");
-    await linkTelegram(alice.owner, "555");
-    await db.update(owners).set({ confidentialDefault: true }).where(eq(owners.id, alice.owner.id));
-    await askOwner(alice.agent, secretQuestion);
-    await drainJobs();
-    expect(mails()).toHaveLength(1);
-    expect(telegramMessages()).toHaveLength(1);
-    expect(outbound()).not.toContain(MARKER);
-
-    resetOutbound();
-    await db
-      .update(owners)
-      .set({ confidentialDefault: false })
-      .where(eq(owners.id, alice.owner.id));
-    await askOwner(alice.agent, secretQuestion);
-    await drainJobs();
-    expect(mails()[0]?.text).toContain(MARKER);
-    expect(telegramMessages()[0]?.body.text).toContain(MARKER);
-  });
-
-  it("notifies as before about a conversation that isn't confidential", async () => {
+  it("carry no content, whatever the conversation and its flags, and link to the app", async () => {
     const alice = await createAgentWithToken("alice_agent");
     await createAgentWithToken("bob_agent");
     await linkTelegram(alice.owner, "555");
     await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
 
     const about = await askOwner(alice.agent, { ...secretQuestion, conversation: "@bob_agent" });
+    await askOwner(alice.agent, secretQuestion);
+    const queued = await db.select().from(jobs);
+    expect(JSON.stringify(queued)).not.toContain(MARKER);
     await drainJobs();
-    const withConversation = { mail: mails()[0], telegram: telegramMessages()[0]?.body };
-    resetOutbound();
-    const plain = await askOwner(alice.agent, secretQuestion);
-    await drainJobs();
-    const without = { mail: mails()[0], telegram: telegramMessages()[0]?.body };
 
-    // Only the ids and the one-time answer links differ.
-    const normalize = (value: unknown, id: string) =>
-      JSON.stringify(value)
-        .replaceAll(id, "ID")
-        .replace(/token=[\w-]+/g, "token=T");
-    expect(normalize(withConversation, about.id)).toBe(normalize(without, plain.id));
-    expect(withConversation.mail?.text).toContain(MARKER);
-    expect(withConversation.mail?.text).toContain("/answer?token=");
-    expect(JSON.stringify(withConversation.telegram)).toContain(`answer:${about.id}:0`);
+    expect(mails()).toHaveLength(2);
+    expect(telegramMessages()).toHaveLength(2);
+    expect(outbound()).not.toContain(MARKER);
+    const url = `http://localhost:3001/dashboard/questions?question=${about.id}`;
+    expect(mails()[0]?.to).toBe(alice.owner.email);
+    expect(mails().some((mail) => mail.text.includes(url))).toBe(true);
+    expect(
+      mails()
+        .map((mail) => mail.text)
+        .join(),
+    ).not.toContain("/answer");
+    expect(telegramMessages()[0]?.body.text).toContain("@alice_agent");
+    expect(telegramMessages().map((call) => call.body.reply_markup)).toContainEqual({
+      inline_keyboard: [[{ text: "Open in Callsign", url }]],
+    });
+
+    await answerQuestion(alice.owner.id, about.id, { option: 1 });
+    expect((await checkInbox(alice.agent)).ownerAnswers).toMatchObject([{ answer: "No" }]);
   });
 });
 
@@ -450,13 +400,11 @@ describe("held action notifications", () => {
     return row?.status;
   }
 
-  it("leaves the message out when another member keeps the conversation confidential", async () => {
+  it("carry only what kind of action and for whom, and approve only in the app", async () => {
     const alice = await withPolicy("alice_agent", { hourlyMessages: 1 });
-    const bob = await createAgentWithToken("bob_agent");
+    await createAgentWithToken("bob_agent");
     await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
     await createGroup(alice.agent, { name: "launch", members: ["@bob_agent"] });
-    await setConfidential(bob.agent, "@alice_agent", true);
-    await setConfidential(bob.agent, "#launch", true);
 
     const direct = await holdMessage(alice.token, "@bob_agent");
     const group = await holdMessage(alice.token, "#launch");
@@ -468,47 +416,24 @@ describe("held action notifications", () => {
     const texts = mails().map((mail) => mail.text);
     expect(texts.join()).toContain("Message to @bob_agent.");
     expect(texts.join()).toContain("Message to #launch.");
-    expect(texts.every((text) => text.includes("http://localhost:3001/dashboard/approvals"))).toBe(
-      true,
-    );
     expect(texts.join()).not.toContain("/approve?token=");
     const toBob = telegramMessages().find((call) => String(call.body.text).includes("@bob_agent"));
     expect(toBob?.body.reply_markup).toEqual({
       inline_keyboard: [
+        [{ text: "Open in Callsign", url: "http://localhost:3001/dashboard/approvals" }],
         [{ text: "Decline", callback_data: `hd:${direct}` }],
-        [{ text: "Open in the dashboard", url: "http://localhost:3001/dashboard/approvals" }],
       ],
     });
 
-    expect(await tap(direct, "ha")).toMatch(/dashboard/);
+    expect(await tap(direct, "ha")).toMatch(/app/);
     expect(await status(direct)).toBe("pending");
     expect(await tap(group, "hd")).toBe("Declined.");
     expect(await status(group)).toBe("denied");
     expect(outbound()).not.toContain(MARKER);
   });
 
-  it("follows the defaults for a first message, which would start a conversation", async () => {
-    const alice = await withPolicy("alice_agent", { firstContact: true });
-    const bob = await createAgentWithToken("bob_agent");
-    await createAgentWithToken("carol_agent");
-    await db.update(owners).set({ confidentialDefault: true }).where(eq(owners.id, bob.owner.id));
-
-    const toBob = await holdMessage(alice.token, "@bob_agent");
-    await drainJobs();
-    expect(outbound()).not.toContain(MARKER);
-    expect(await tap(toBob, "ha")).toMatch(/dashboard/);
-    expect(await status(toBob)).toBe("pending");
-
-    resetOutbound();
-    await holdMessage(alice.token, "@carol_agent");
-    await drainJobs();
-    expect(mails()[0]?.text).toContain(MARKER);
-    expect(telegramMessages()[0]?.body.text).toContain(MARKER);
-  });
-
-  it("leaves tool call arguments out when the owner's default is confidential", async () => {
+  it("leave tool call arguments out", async () => {
     const alice = await withPolicy("alice_agent", {});
-    await db.update(owners).set({ confidentialDefault: true }).where(eq(owners.id, alice.owner.id));
     const held = await maybeHold(
       { agent: alice.agent, tokenId: "", client: "test" },
       {
@@ -523,31 +448,8 @@ describe("held action notifications", () => {
     expect(telegramMessages()).toHaveLength(1);
     expect(outbound()).not.toContain(MARKER);
     expect(telegramMessages()[0]?.body.text).toContain("send_invoice");
-    expect(await tap(held!.holdId, "ha")).toMatch(/dashboard/);
     expect(await tap(held!.holdId, "hd")).toBe("Declined.");
     expect(await status(held!.holdId)).toBe("denied");
-  });
-
-  it("notifies as before in a conversation that isn't confidential", async () => {
-    const alice = await withPolicy("alice_agent", { hourlyMessages: 1 });
-    await createAgentWithToken("bob_agent");
-    await sendMessage(alice.agent, { to: "@bob_agent", body: "Hello" });
-
-    const holdId = await holdMessage(alice.token, "@bob_agent");
-    await drainJobs();
-    expect(mails()[0]?.text).toContain(`Message to @bob_agent: “Pricing: ${MARKER}”`);
-    expect(mails()[0]?.text).toContain("/approve?token=");
-    expect(telegramMessages()[0]?.body.text).toContain(MARKER);
-    expect(telegramMessages()[0]?.body.reply_markup).toEqual({
-      inline_keyboard: [
-        [
-          { text: "Approve", callback_data: `ha:${holdId}` },
-          { text: "Decline", callback_data: `hd:${holdId}` },
-        ],
-      ],
-    });
-    expect(await tap(holdId, "ha")).toBe("Approved.");
-    expect(await status(holdId)).toBe("released");
   });
 });
 

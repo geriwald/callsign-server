@@ -11,6 +11,7 @@ import {
   type PushSubscription,
 } from "../db/schema.ts";
 import { randomToken } from "../lib/crypto.ts";
+import { logger } from "../lib/logger.ts";
 import { uuidv7 } from "../lib/ids.ts";
 import { pushEnabled, sendPush, type PushPayload } from "../lib/push.ts";
 import { rateLimit } from "../lib/rate-limit.ts";
@@ -19,8 +20,6 @@ import { answerTargets } from "./answer-channels.ts";
 import { AppError } from "./errors.ts";
 import { formatHandle } from "./handles.ts";
 import { holdForApprover } from "./holds.ts";
-import { ownerKey } from "./keys.ts";
-import { openQuestion, questionIsConfidential } from "./questions.ts";
 
 const TEST_TTL_SECONDS = 15 * 60;
 const testKey = (token: string) => `push-test:${token}`;
@@ -171,33 +170,30 @@ async function pushToOwner(ownerId: string, payload: PushPayload): Promise<void>
     .select()
     .from(pushSubscriptions)
     .where(and(eq(pushSubscriptions.ownerId, ownerId), isNotNull(pushSubscriptions.testedAt)));
-  await Promise.allSettled(rows.map((row) => deliver(row, payload)));
+  const results = await Promise.allSettled(rows.map((row) => deliver(row, payload)));
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      const err = result.reason as { statusCode?: number; body?: string };
+      logger.warn(
+        { device: rows[index]?.id, status: err.statusCode, body: err.body, err: result.reason },
+        "push send failed",
+      );
+    }
+  });
 }
 
 export async function sendQuestionPush({ questionId }: { questionId: string }): Promise<void> {
   const [found] = await db
-    .select({ question: ownerQuestions, agent: agents, owner: owners })
+    .select({ question: ownerQuestions, agent: agents })
     .from(ownerQuestions)
     .innerJoin(agents, eq(agents.id, ownerQuestions.agentId))
-    .innerJoin(owners, eq(owners.id, agents.ownerId))
     .where(eq(ownerQuestions.id, questionId));
   if (!found || found.question.answeredAt) return;
-  const handle = formatHandle(found.agent.handle);
-  const url = `/dashboard?question=${questionId}`;
-  if (await questionIsConfidential(found.question.conversationId, found.owner)) {
-    await pushToOwner(found.owner.id, {
-      title: `${handle} has a question`,
-      body: "Confidential: tap to read.",
-      url,
-      tag: questionId,
-    });
-    return;
-  }
-  const { question } = openQuestion(await ownerKey(found.owner.id), found.question);
-  await pushToOwner(found.owner.id, {
-    title: `${handle} asks`,
-    body: question,
-    url,
+  // Content stays on the instance: the notification says who asked, the app shows the question.
+  await pushToOwner(found.agent.ownerId, {
+    title: `${formatHandle(found.agent.handle)} has a question`,
+    body: "Tap to answer.",
+    url: `/dashboard/questions?question=${questionId}`,
     tag: questionId,
   });
 }
@@ -207,7 +203,7 @@ export async function sendHoldPush({ holdId }: { holdId: string }): Promise<void
   if (!found || !answerTargets(found.owner).push) return;
   await pushToOwner(found.owner.id, {
     title: `${found.view.agent} needs approval`,
-    body: found.confidential ? "Confidential: tap to review." : found.outline,
+    body: found.outline,
     url: "/dashboard/approvals",
     tag: holdId,
   });

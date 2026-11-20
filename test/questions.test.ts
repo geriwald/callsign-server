@@ -14,7 +14,8 @@ describe("asking the owner", () => {
       context: "Bob's agent asked for it to plan ads.",
     });
     const [email] = await db.select().from(jobs).where(eq(jobs.kind, "email.question"));
-    expect(email?.payload).toMatchObject({ handle: "@alice_agent", question: asked.question });
+    expect(email?.payload).toMatchObject({ handle: "@alice_agent" });
+    expect(JSON.stringify(email?.payload)).not.toContain("Q3 budget");
 
     expect(await listOwnerQuestions(owner.id, { open: true })).toMatchObject([
       { id: asked.id, agent: "@alice_agent", context: "Bob's agent asked for it to plan ads." },
